@@ -1,0 +1,430 @@
+/* AntroPOS — tema admin (réplica visual del original shadcn/Tailwind)
+   Reutiliza las clases de Bootstrap (.btn, .card, .table, .modal, .form-control,
+   .badge, .nav-link, .alert) pero sobreescribe su apariencia para que coincida
+   con el sistema de diseño shadcn/ui + Tailwind del original. Bootstrap sigue
+   aportando el JS (modales, dropdowns, collapse, tooltips). */
+
+:root {
+  --background: 0 0% 100%;
+  --foreground: 222.2 84% 4.9%;
+  --card: 0 0% 100%;
+  --card-foreground: 222.2 84% 4.9%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 222.2 84% 4.9%;
+  --primary: 222.2 47.4% 11.2%;
+  --primary-foreground: 210 40% 98%;
+  --secondary: 210 40% 96.1%;
+  --secondary-foreground: 222.2 47.4% 11.2%;
+  --muted: 210 40% 96.1%;
+  --muted-foreground: 215.4 16.3% 46.9%;
+  --accent: 210 40% 96.1%;
+  --accent-foreground: 222.2 47.4% 11.2%;
+  --destructive: 0 84.2% 60.2%;
+  --destructive-foreground: 210 40% 98%;
+  --border: 214.3 31.8% 91.4%;
+  --input: 214.3 31.8% 91.4%;
+  --ring: 222.2 84% 4.9%;
+  --radius: 0.5rem;
+  --chart-1: 12 76% 61%;
+  --chart-2: 173 58% 39%;
+  --chart-3: 197 37% 24%;
+  --chart-4: 43 74% 66%;
+  --chart-5: 27 87% 67%;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-size: 0.875rem;
+}
+
+a { color: inherit; }
+
+/* ---------------------------------------------------------------------- */
+/* Shell layout                                                           */
+/* ---------------------------------------------------------------------- */
+.app-header {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  height: 3.5rem;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0 1rem;
+  background: hsl(var(--background));
+  border-bottom: 1px solid hsl(var(--border));
+}
+
+.app-header .icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: var(--radius);
+  border: 1px solid transparent;
+  background: transparent;
+  color: hsl(var(--foreground));
+  flex-shrink: 0;
+}
+.app-header .icon-btn:hover { background: hsl(var(--muted)); }
+
+.app-header .brand {
+  display: none;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 600;
+  text-decoration: none;
+  color: hsl(var(--foreground));
+}
+@media (min-width: 768px) {
+  .app-header .brand { display: inline-flex; }
+  .app-header .brand .brand-text { display: none; } /* sr-only on desktop, matches original */
+}
+
+.app-header .page-title {
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 0;
+  flex: 1;
+}
+
+.app-header .header-right {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-left: auto;
+}
+
+.avatar-btn {
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: 999px;
+  background: hsl(var(--muted));
+  color: hsl(var(--foreground));
+  border: 1px solid hsl(var(--border));
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+
+/* Sidebar rail: icon-only, collapsible */
+.app-sidebar {
+  position: fixed;
+  top: 3.5rem;
+  left: 0;
+  bottom: 0;
+  width: 3.5rem;
+  background: hsl(var(--background));
+  border-right: 1px solid hsl(var(--border));
+  display: none;
+  flex-direction: column;
+  padding: 0.75rem 0;
+  gap: 0.25rem;
+  z-index: 20;
+  overflow-y: auto;
+  transition: width .15s ease;
+}
+@media (min-width: 768px) {
+  .app-sidebar { display: flex; }
+}
+.app-sidebar.expanded { width: 13rem; }
+
+.app-sidebar .nav-rail-link {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  height: 2.25rem;
+  margin: 0 0.5rem;
+  padding: 0 0.6rem;
+  border-radius: var(--radius);
+  color: hsl(var(--muted-foreground));
+  text-decoration: none;
+  white-space: nowrap;
+  overflow: hidden;
+  font-size: 0.85rem;
+}
+.app-sidebar .nav-rail-link i { font-size: 1.05rem; flex-shrink: 0; width: 1.2rem; text-align: center; }
+.app-sidebar .nav-rail-link span { display: none; }
+.app-sidebar.expanded .nav-rail-link span { display: inline; }
+.app-sidebar .nav-rail-link:hover { background: hsl(var(--muted)); color: hsl(var(--foreground)); }
+.app-sidebar .nav-rail-link.active { background: hsl(var(--accent)); color: hsl(var(--accent-foreground)); }
+
+.app-main {
+  margin-left: 0;
+  padding: 1.25rem 1rem 3rem;
+  min-height: calc(100vh - 3.5rem);
+}
+@media (min-width: 768px) {
+  .app-main { margin-left: 3.5rem; }
+}
+
+/* Mobile drawer */
+.mobile-drawer .offcanvas-body { padding: 0.75rem; }
+.mobile-drawer .nav-rail-link { margin: 0 0; }
+.mobile-drawer .nav-rail-link span { display: inline; }
+
+/* ---------------------------------------------------------------------- */
+/* Component overrides (shadcn look reusing Bootstrap classnames)         */
+/* ---------------------------------------------------------------------- */
+.card {
+  background: hsl(var(--card));
+  color: hsl(var(--card-foreground));
+  border: 1px solid hsl(var(--border));
+  border-radius: 0.75rem;      /* rounded-xl, exacto al Card de shadcn/ui */
+  box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
+}
+.card .card-header { background: transparent; border-bottom: 1px solid hsl(var(--border)); font-weight: 600; }
+.card-body { padding: 1.5rem; }      /* CardContent: p-6 */
+.card-title { font-weight: 600; line-height: 1; letter-spacing: -0.025em; font-size: 1rem; }
+.card-subtitle, .card-text.text-muted { font-size: 0.875rem; }
+
+/* Botones — replica exacta de buttonVariants() del Button de shadcn/ui
+   (packages/ui/src/components/button.tsx): mismas alturas, paddings,
+   tipografía, sombras y estados hover por variante. */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  height: 2.25rem;             /* h-9 */
+  padding: 0.5rem 1rem;        /* py-2 px-4 */
+  border-radius: 0.375rem;     /* rounded-md */
+  font-size: 0.875rem;         /* text-sm */
+  font-weight: 500;            /* font-medium */
+  line-height: 1.25rem;
+  border: 1px solid transparent;
+  white-space: nowrap;
+  transition: background-color .15s ease, color .15s ease, border-color .15s ease;
+}
+.btn:focus-visible { outline: none; box-shadow: 0 0 0 1px hsl(var(--ring)); }
+
+.btn-primary {
+  background: hsl(var(--primary));
+  border-color: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+  box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+}
+.btn-primary:hover { background: hsl(var(--primary) / 0.9); border-color: hsl(var(--primary) / 0.9); }
+
+.btn-secondary {
+  background: hsl(var(--secondary));
+  border-color: hsl(var(--secondary));
+  color: hsl(var(--secondary-foreground));
+  box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+}
+.btn-secondary:hover { background: hsl(var(--secondary) / 0.8); }
+
+.btn-outline-secondary, .btn-outline-danger, .btn-outline-primary {
+  background: hsl(var(--background));
+  border-color: hsl(var(--input));
+  color: hsl(var(--foreground));
+  box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+}
+.btn-outline-danger { color: hsl(var(--destructive)); border-color: hsl(var(--destructive) / 0.4); }
+.btn-outline-secondary:hover, .btn-outline-primary:hover { background: hsl(var(--accent)); color: hsl(var(--accent-foreground)); }
+.btn-outline-danger:hover { background: hsl(var(--destructive) / 0.1); color: hsl(var(--destructive)); }
+
+.btn-danger {
+  background: hsl(var(--destructive));
+  border-color: hsl(var(--destructive));
+  color: hsl(var(--destructive-foreground));
+  box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+}
+.btn-danger:hover { background: hsl(var(--destructive) / 0.9); }
+
+.btn-sm { height: 2rem; padding: 0 0.75rem; font-size: 0.8rem; border-radius: 0.375rem; }
+.btn-lg { height: 2.5rem; padding: 0 2rem; }
+.btn.icon-btn, .btn-icon { height: 2.25rem; width: 2.25rem; padding: 0; }
+
+/* ghost variant (buttonVariants 'ghost': sin fondo/borde, hover bg-accent) */
+.btn-ghost { background: transparent; border-color: transparent; color: hsl(var(--foreground)); box-shadow: none; }
+.btn-ghost:hover { background: hsl(var(--accent)); color: hsl(var(--accent-foreground)); }
+
+/* stepper de cantidad (POS): size="icon" + className="h-7 w-7" del original */
+.qty-btn { height: 1.75rem; width: 1.75rem; padding: 0; font-size: 0.75rem; border-radius: 0.375rem; }
+.qty-btn i { font-size: 0.75rem; }
+.qty-btn:disabled { opacity: 0.5; pointer-events: none; }
+
+.form-control, .form-select {
+  background: hsl(var(--background));
+  border: 1px solid hsl(var(--input));
+  border-radius: 0.375rem;     /* rounded-md, exacto al Input de shadcn/ui */
+  height: 2.25rem;             /* h-9 */
+  padding: 0.25rem 0.75rem;    /* py-1 px-3 */
+  font-size: 0.875rem;         /* text-sm */
+  line-height: 1.5;
+  color: hsl(var(--foreground));
+  box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05); /* shadow-sm */
+}
+.form-control::placeholder { color: hsl(var(--muted-foreground)); opacity: 1; }
+textarea.form-control { height: auto; }
+.form-control:focus, .form-select:focus {
+  border-color: hsl(var(--ring) / 0.5);
+  box-shadow: 0 0 0 1px hsl(var(--ring));
+}
+.form-control-sm, .form-select-sm { height: 2rem; font-size: 0.8rem; padding: 0.2rem 0.6rem; }
+.form-label { font-size: 0.875rem; font-weight: 500; margin-bottom: 0.4rem; line-height: 1; }
+.form-text { color: hsl(var(--muted-foreground)); font-size: 0.78rem; }
+
+.table {
+  color: hsl(var(--foreground));
+  font-size: 0.875rem;
+  margin-bottom: 0;
+}
+.table thead th {
+  height: 2.5rem;              /* h-10 */
+  border-bottom: 1px solid hsl(var(--border));
+  color: hsl(var(--muted-foreground));
+  font-weight: 500;
+  text-transform: none;
+  vertical-align: middle;
+}
+.table > :not(caption) > * > * { border-bottom-color: hsl(var(--border)); padding: 0.5rem; vertical-align: middle; }
+.table-hover tbody tr:hover { background: hsl(var(--muted) / 0.5); }
+
+/* Badge — replica exacta de badgeVariants() (packages/ui/src/components/badge.tsx):
+   rounded-md (NO pill), border, px-2.5 py-0.5, text-xs font-semibold. */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 0.375rem;
+  border: 1px solid transparent;
+  font-weight: 600;
+  font-size: 0.75rem;
+  line-height: 1rem;
+  padding: 0.125rem 0.625rem;
+}
+.badge.bg-primary { background: hsl(var(--primary)) !important; color: hsl(var(--primary-foreground)) !important; }
+.badge.bg-success { background: hsl(142 71% 45%) !important; color: hsl(0 0% 100%) !important; }
+.badge.bg-warning { background: hsl(38 92% 50%) !important; color: hsl(26 84% 18%) !important; }
+.badge.bg-danger  { background: hsl(var(--destructive)) !important; color: hsl(var(--destructive-foreground)) !important; }
+.badge.bg-secondary { background: hsl(var(--secondary)) !important; color: hsl(var(--secondary-foreground)) !important; }
+.badge.bg-outline, .badge.text-bg-light { background: transparent !important; color: hsl(var(--foreground)) !important; border-color: hsl(var(--border)) !important; }
+/* Variantes custom income/expense de badge.tsx (bg-green-500/bg-red-500). */
+.badge.badge-income { background: #22c55e !important; color: #f0fdf4 !important; }
+.badge.badge-expense { background: #ef4444 !important; color: #fef2f2 !important; }
+
+.modal-content {
+  background: hsl(var(--card));
+  color: hsl(var(--card-foreground));
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius);
+}
+.modal-header, .modal-footer { border-color: hsl(var(--border)); }
+
+.alert { border-radius: var(--radius); font-size: 0.85rem; }
+.alert-success { background: hsl(142 71% 45% / 0.1); border-color: hsl(142 71% 45% / 0.25); color: hsl(142 71% 25%); }
+.alert-danger { background: hsl(var(--destructive) / 0.1); border-color: hsl(var(--destructive) / 0.25); color: hsl(var(--destructive)); }
+
+.dropdown-menu {
+  background: hsl(var(--popover));
+  color: hsl(var(--popover-foreground));
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius);
+  box-shadow: 0 4px 12px rgb(0 0 0 / 0.08);
+  font-size: 0.85rem;
+}
+.dropdown-item:hover, .dropdown-item:focus { background: hsl(var(--muted)); color: hsl(var(--foreground)); }
+.dropdown-divider { border-color: hsl(var(--border)); }
+
+.text-muted { color: hsl(var(--muted-foreground)) !important; }
+
+/* Tooltips for collapsed sidebar */
+.tooltip-inner { font-size: 0.78rem; }
+
+/* ---------------------------------------------------------------------- */
+/* Dashboard: KPI cards + charts (réplica de admin/page.tsx)              */
+/* ---------------------------------------------------------------------- */
+.kpi-card .card-body { padding: 1rem 1.25rem; }
+.kpi-card .kpi-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.5rem; }
+.kpi-card .kpi-label { font-size: 0.875rem; font-weight: 500; }
+.kpi-card .kpi-value { font-size: 1.5rem; font-weight: 700; line-height: 2rem; }
+.kpi-card .kpi-sub { font-size: 0.75rem; color: hsl(var(--muted-foreground)); margin: 0; }
+.kpi-card .kpi-icon { color: hsl(var(--muted-foreground)); font-size: 1rem; }
+.text-emerald { color: hsl(160 84% 39%); }
+.text-rose { color: hsl(0 72% 51%); }
+
+/* ---------------------------------------------------------------------- */
+/* Combobox (réplica de packages/ui/src/components/combobox.tsx): botón    */
+/* outline + popover con buscador y lista, reemplaza al <select> nativo    */
+/* en los puntos donde el original usa <Combobox>.                         */
+/* ---------------------------------------------------------------------- */
+.combobox { position: relative; }
+.combobox-trigger {
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  appearance: none;
+  margin: 0;
+  font-family: inherit;
+  cursor: pointer;
+  text-align: left;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  width: 100%;
+  height: 2.25rem;
+  padding: 0.5rem 1rem;
+  border-radius: 0.375rem;
+  border: 1px solid hsl(var(--input));
+  background-color: hsl(var(--background));
+  background-image: none;
+  color: hsl(var(--foreground));
+  font-size: 0.875rem;
+  font-weight: 400;
+  box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+}
+.combobox-trigger:hover { background-color: hsl(var(--accent)); color: hsl(var(--accent-foreground)); }
+.combobox-trigger:focus-visible { outline: none; box-shadow: 0 0 0 1px hsl(var(--ring)); }
+.combobox-trigger .combobox-value { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; flex: 1; }
+.combobox-trigger .combobox-value.placeholder { color: hsl(var(--muted-foreground)); }
+.combobox-trigger .combobox-chevron { flex-shrink: 0; opacity: 0.5; font-size: 0.85rem; }
+
+.combobox-menu { padding: 0; overflow: hidden; }
+.combobox-search-wrap {
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid hsl(var(--border));
+  padding: 0 0.6rem;
+}
+.combobox-search-wrap i { color: hsl(var(--muted-foreground)); font-size: 0.8rem; margin-right: 0.4rem; flex-shrink: 0; }
+.combobox-search {
+  border: none;
+  outline: none;
+  height: 2.25rem;
+  font-size: 0.85rem;
+  width: 100%;
+  background: transparent;
+  box-shadow: none !important;
+  padding: 0 !important;
+}
+.combobox-list { max-height: 14rem; overflow-y: auto; padding: 0.25rem; }
+.combobox-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  padding: 0.4rem 0.6rem;
+  border-radius: 0.25rem;
+  font-size: 0.85rem;
+  color: hsl(var(--popover-foreground));
+}
+.combobox-item:hover, .combobox-item.is-active { background: hsl(var(--accent)); color: hsl(var(--accent-foreground)); }
+.combobox-empty { padding: 0.75rem; text-align: center; font-size: 0.8rem; color: hsl(var(--muted-foreground)); }
+
+.chart-card .card-body { padding: 1.25rem; }
+.chart-card .chart-title { font-weight: 600; font-size: 1rem; margin: 0; }
+.chart-card .chart-desc { font-size: 0.85rem; color: hsl(var(--muted-foreground)); margin: 0 0 .75rem; }
+.chart-wrap { position: relative; height: 280px; }
+.chart-empty { display: flex; align-items: center; justify-content: center; height: 280px; color: hsl(var(--muted-foreground)); font-size: 0.875rem; }
+.donut-center { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); text-align: center; pointer-events: none; }
+.donut-center .donut-total { font-size: 1.15rem; font-weight: 700; color: hsl(var(--foreground)); }
+.donut-center .donut-label { font-size: 0.72rem; color: hsl(var(--muted-foreground)); }
