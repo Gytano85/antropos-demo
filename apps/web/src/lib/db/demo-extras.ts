@@ -1,4 +1,4 @@
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { db } from ".";
 import {
 	brandingSettings,
@@ -324,16 +324,103 @@ export async function seedShrinkageDemo(userId: string) {
 }
 
 // ── Product images ───────────────────────────────────────────────────────────
+// Fotos reales (Wikimedia Commons, dominio público / CC) elegidas por producto
+// o, cuando no existe una foto específica de la marca, por categoría afín.
+function commonsImage(fileName: string) {
+	return `https://commons.wikimedia.org/wiki/Special:FilePath/${fileName}`;
+}
+
+const PRODUCT_IMAGE_MAP: Record<string, string> = {
+	// Cervezas
+	"Corona Extra": commonsImage("Corona Extra beer bottle (2019).png"),
+	"Modelo Especial": commonsImage("Cerveza Modelo Especial.JPG"),
+	Victoria: commonsImage("Litrona de cerveza Victoria.jpg"),
+	"Michelob Ultra": commonsImage("Michelob ULTRA 1.jpg"),
+	Heineken: commonsImage("Heineken .jpg"),
+	"XX Lager": commonsImage("Lucky lager bottle.jpg"),
+
+	// Cocteles
+	Mojito: commonsImage("Standard version of Mojito Cocktail.jpg"),
+	Margarita: commonsImage("Original Margarita.JPG"),
+	Paloma: commonsImage("Botella de tequila flotando.JPG"),
+	Carajillo: commonsImage("Doppio.jpg"),
+	"Gin Tonic": commonsImage("Gin and tonic.jpg"),
+	Azulito: commonsImage("Blue Curaçao Bottle.jpg"),
+
+	// Botellas (servicio de mesa)
+	"Tequila Don Julio 70": commonsImage("Tequilas.JPG"),
+	"Tequila Maestro Dobel Diamante": commonsImage(
+		"Botella de tequila Maestro DOBEL.png",
+	),
+	"Whisky Buchanan's 12": commonsImage("Botella de whisky President.JPG"),
+	"Whisky Johnnie Walker Black": commonsImage(
+		"Johnnie Walker Black Label Limited edition2.JPG",
+	),
+	"Vodka Grey Goose": commonsImage("Grey Goose Vodka IMG 3297.JPG"),
+	"Ron Zacapa 23": commonsImage("Captain Morgan Rum - Bottle.png"),
+
+	// Sin alcohol
+	"Agua Natural": commonsImage("Drinking water.jpg"),
+	"Agua Mineral": commonsImage("Bonaqua mineral water.jpg"),
+	Refresco: commonsImage("Coca-Cola glass bottle.png"),
+	"Red Bull": commonsImage("Red Gaur(Bull) can back.JPG"),
+	"Limonada Mineral": commonsImage("Costa Stawberry Lemonade.jpg"),
+
+	// Snacks
+	"Papas a la Francesa": commonsImage("French Fries.JPG"),
+	"Nachos con Queso": commonsImage("Nachos-cheese.jpg"),
+	"Alitas BBQ": commonsImage("Homemade buffalo wings.jpg"),
+	"Mini Hamburguesas": commonsImage("Mini Waygu Sliders.jpg"),
+	"Tabla de Carnes Frías": commonsImage("A charcuterie board.jpg"),
+
+	// Servicios (cover / mesas / mezcladores)
+	"Cover General": commonsImage("Pacha Ibiza nightclub.jpg"),
+	"Cover Evento Especial": commonsImage(
+		"Watergate Nightclub Berlin LED Lights.jpg",
+	),
+	"Reservación Mesa VIP": commonsImage("Pacha Ibiza nightclub.jpg"),
+	"Servicio de Mezcladores": commonsImage(
+		"Hendrick's Gin and Fever-Tree Tonic.jpg",
+	),
+};
+
+const FALLBACK_IMAGE_BY_CATEGORY: Record<string, string> = {
+	cervezas: commonsImage("Lucky lager bottle.jpg"),
+	cocteles: commonsImage("Original Margarita.JPG"),
+	botellas: commonsImage("Tequilas.JPG"),
+	sin_alcohol: commonsImage("Drinking water.jpg"),
+	snacks: commonsImage("Nachos-cheese.jpg"),
+	servicios: commonsImage("Pacha Ibiza nightclub.jpg"),
+};
+
 export async function seedProductImagesDemo(userId: string) {
 	const rows = await db
-		.select({ id: products.id })
+		.select({
+			id: products.id,
+			name: products.name,
+			category: products.category,
+			image_url: products.image_url,
+		})
 		.from(products)
-		.where(and(eq(products.user_uid, userId), isNull(products.image_url)));
+		.where(eq(products.user_uid, userId));
 
 	for (const row of rows) {
+		// No tocamos fotos que el usuario ya subió/personalizó manualmente;
+		// solo reemplazamos las que faltan o las que quedaron con el viejo
+		// placeholder aleatorio de picsum.photos.
+		const isPlaceholder =
+			!row.image_url || row.image_url.includes("picsum.photos");
+		if (!isPlaceholder) continue;
+
+		const image =
+			PRODUCT_IMAGE_MAP[row.name] ??
+			FALLBACK_IMAGE_BY_CATEGORY[row.category ?? ""] ??
+			null;
+		if (!image) continue;
+
 		await db
 			.update(products)
-			.set({ image_url: `https://picsum.photos/seed/antros-product-${row.id}/400/400` })
+			.set({ image_url: image })
 			.where(eq(products.id, row.id));
 	}
 }
