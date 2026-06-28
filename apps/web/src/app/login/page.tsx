@@ -7,7 +7,7 @@ import { Input } from "@finopenpos/ui/components/input";
 import Link from "next/link";
 import { Button } from "@finopenpos/ui/components/button";
 import { MountainIcon } from "lucide-react";
-import { useRef } from "react";
+import { useEffect, useRef } from "react";
 import { useTranslations } from "next-intl";
 import { LocaleSwitcher } from "@/components/locale-switcher";
 
@@ -20,6 +20,12 @@ export default function LoginPage() {
     if (emailRef.current) emailRef.current.value = "test@example.com";
     if (passwordRef.current) passwordRef.current.value = "test1234";
   }
+
+  // Autorrellenar credenciales demo al entrar a la página, sin que el
+  // visitante tenga que tocar el botón "usar credenciales de prueba".
+  useEffect(() => {
+    fillDemo();
+  }, []);
 
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-background">
@@ -45,6 +51,7 @@ export default function LoginPage() {
                   name="email"
                   type="email"
                   placeholder={t("emailPlaceholder")}
+                  defaultValue="test@example.com"
                   required
                   autoComplete="email"
                 />
@@ -56,6 +63,7 @@ export default function LoginPage() {
                   id="password"
                   name="password"
                   type="password"
+                  defaultValue="test1234"
                   required
                   autoComplete="current-password"
                 />

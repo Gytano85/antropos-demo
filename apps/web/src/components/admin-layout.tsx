@@ -36,6 +36,7 @@ import {
 	UtensilsIcon,
 	XIcon,
 } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -43,6 +44,8 @@ import { useTranslations } from "next-intl";
 import { useState } from "react";
 import { logout } from "@/app/login/actions";
 import { LocaleSwitcher } from "@/components/locale-switcher";
+import { hexToHslString, isHexDark } from "@/lib/branding/color";
+import { useTRPC } from "@/lib/trpc/client";
 
 interface NavItem {
 	href: string;
@@ -100,13 +103,31 @@ export function AdminLayout({ children }: { children: React.ReactNode }) {
 	const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 	const [sidebarExpanded, setSidebarExpanded] = useState(false);
 	const t = useTranslations("nav");
+	const trpc = useTRPC();
+	const { data: branding } = useQuery(trpc.branding.getSettings.queryOptions());
 
-	const pageNames: Record<string, string> = Object.fromEntries(
-		navItems.map((item) => [item.href, t(item.labelKey)]),
-	);
+	const companyName = branding?.companyName || "FinOpenPOS";
+	const brandStyle: React.CSSProperties = {};
+	if (branding?.primaryColor) {
+		const hsl = hexToHslString(branding.primaryColor);
+		if (hsl) {
+			brandStyle["--primary" as keyof React.CSSProperties] = hsl;
+			brandStyle["--ring" as keyof React.CSSProperties] = hsl;
+			brandStyle["--primary-foreground" as keyof React.CSSProperties] =
+				isHexDark(branding.primaryColor) ? "0 0% 100%" : "222.2 47.4% 11.2%";
+		}
+	}
+
+	const pageNames: Record<string, string> = {
+		...Object.fromEntries(navItems.map((item) => [item.href, t(item.labelKey)])),
+		"/admin/settings": t("settings"),
+	};
 
 	return (
-		<div className="flex min-h-screen w-full flex-col bg-muted/40">
+		<div
+			className="flex min-h-screen w-full flex-col bg-muted/40"
+			style={brandStyle}
+		>
 			<header className="sticky top-0 z-30 flex h-14 items-center gap-2 border-b bg-background px-3 sm:gap-4 sm:px-4">
 				<Button
 					variant="ghost"
@@ -134,7 +155,8 @@ export function AdminLayout({ children }: { children: React.ReactNode }) {
 					href="/admin"
 					className="hidden items-center gap-2 font-semibold text-lg sm:flex"
 				>
-					<Package2Icon className="h-6 w-6" />
+					<Package2Icon className="h-6 w-6 text-primary" />
+					<span className="truncate">{companyName}</span>
 					<span className="sr-only">{t("adminPanel")}</span>
 				</Link>
 				<h1 className="truncate font-bold text-lg sm:text-xl">
@@ -161,7 +183,9 @@ export function AdminLayout({ children }: { children: React.ReactNode }) {
 						<DropdownMenuContent align="end">
 							<DropdownMenuLabel>{t("myAccount")}</DropdownMenuLabel>
 							<DropdownMenuSeparator />
-							<DropdownMenuItem>{t("settings")}</DropdownMenuItem>
+							<DropdownMenuItem asChild>
+								<Link href="/admin/settings">{t("settings")}</Link>
+							</DropdownMenuItem>
 							<DropdownMenuItem>{t("support")}</DropdownMenuItem>
 							<DropdownMenuSeparator />
 							<DropdownMenuItem onClick={() => logout()}>
@@ -188,8 +212,8 @@ export function AdminLayout({ children }: { children: React.ReactNode }) {
 								className="flex items-center gap-2 font-semibold text-lg"
 								onClick={() => setMobileMenuOpen(false)}
 							>
-								<Package2Icon className="h-6 w-6" />
-								<span>Antro POS</span>
+								<Package2Icon className="h-6 w-6 text-primary" />
+								<span className="truncate">{companyName}</span>
 							</Link>
 							<Button
 								variant="ghost"
@@ -240,40 +264,4 @@ export function AdminLayout({ children }: { children: React.ReactNode }) {
 									<TooltipTrigger asChild>
 										<Link
 											href={href}
-											className={`flex h-10 items-center rounded-lg transition-colors ${
-												sidebarExpanded
-													? "w-full justify-start gap-3 px-3"
-													: "w-9 justify-center"
-											} ${
-												pathname === href
-													? "bg-accent text-accent-foreground"
-													: "text-muted-foreground"
-											} hover:bg-muted hover:text-foreground`}
-										>
-											<Icon className="h-5 w-5 shrink-0" />
-											<span
-												className={
-													sidebarExpanded
-														? "truncate font-medium text-sm"
-														: "sr-only"
-												}
-											>
-												{t(labelKey)}
-											</span>
-										</Link>
-									</TooltipTrigger>
-									{!sidebarExpanded && (
-										<TooltipContent side="right">{t(labelKey)}</TooltipContent>
-									)}
-								</Tooltip>
-							))}
-						</TooltipProvider>
-					</nav>
-				</aside>
-				<main className="flex-1 overflow-x-hidden p-3 sm:px-6 sm:py-0">
-					{children}
-				</main>
-			</div>
-		</div>
-	);
-}
+											className={`flex h-10 items

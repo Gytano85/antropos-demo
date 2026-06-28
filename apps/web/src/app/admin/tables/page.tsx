@@ -18,6 +18,11 @@ import {
 import { Input } from "@finopenpos/ui/components/input";
 import { Label } from "@finopenpos/ui/components/label";
 import {
+	Popover,
+	PopoverContent,
+	PopoverTrigger,
+} from "@finopenpos/ui/components/popover";
+import {
 	Select,
 	SelectContent,
 	SelectItem,
@@ -51,6 +56,7 @@ import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useTRPC } from "@/lib/trpc/client";
 import { formatCurrency } from "@/lib/utils";
+import { ProductPickerGrid } from "@/components/product-picker-grid";
 
 export default function TablesPage() {
 	const trpc = useTRPC();
@@ -77,6 +83,7 @@ export default function TablesPage() {
 	const [closeDialog, setCloseDialog] = useState(false);
 	const [productId, setProductId] = useState("");
 	const [quantity, setQuantity] = useState(1);
+	const [pickerOpen, setPickerOpen] = useState(false);
 	const [paymentMethodId, setPaymentMethodId] = useState("");
 	const [partySizeDraft, setPartySizeDraft] = useState<number | null>(null);
 
@@ -162,6 +169,10 @@ export default function TablesPage() {
 	const availableProducts = useMemo(
 		() => products.filter((product) => product.in_stock > 0),
 		[products],
+	);
+
+	const selectedPickerProduct = availableProducts.find(
+		(product) => String(product.id) === productId,
 	);
 
 	if (isLoading) {
@@ -326,43 +337,62 @@ export default function TablesPage() {
 								)}
 							</div>
 
-							<div className="grid gap-3 rounded-lg border bg-muted/30 p-3 sm:grid-cols-[1fr_100px_auto]">
-								<Select value={productId} onValueChange={setProductId}>
-									<SelectTrigger>
-										<SelectValue placeholder={t("selectProduct")} />
-									</SelectTrigger>
-									<SelectContent>
-										{availableProducts.map((product) => (
-											<SelectItem key={product.id} value={String(product.id)}>
-												{product.name} · {formatCurrency(product.price, locale)}{" "}
-												({product.in_stock})
-											</SelectItem>
-										))}
-									</SelectContent>
-								</Select>
-								<Input
-									type="number"
-									min={1}
-									value={quantity}
-									onChange={(event) =>
-										setQuantity(Math.max(1, Number(event.target.value)))
-									}
-								/>
-								<Button
-									disabled={!productId || addMutation.isPending}
-									onClick={() =>
-										addMutation.mutate({
-											orderId: selectedTable.id,
-											productId: Number(productId),
-											quantity,
-										})
-									}
-								>
-									{addMutation.isPending && (
-										<Loader2Icon className="mr-2 h-4 w-4 animate-spin" />
-									)}
-									{tc("add")}
-								</Button>
+							<div className="space-y-3 rounded-lg border bg-muted/30 p-3">
+								<Popover open={pickerOpen} onOpenChange={setPickerOpen}>
+									<PopoverTrigger asChild>
+										<Button
+											variant="outline"
+											className="w-full justify-start font-normal"
+										>
+											{selectedPickerProduct
+												? `${selectedPickerProduct.name} · ${formatCurrency(selectedPickerProduct.price, locale)}`
+												: t("selectProduct")}
+										</Button>
+									</PopoverTrigger>
+									<PopoverContent
+										align="start"
+										className="w-[min(92vw,32rem)] max-h-80 overflow-y-auto p-3"
+									>
+										<ProductPickerGrid
+											products={availableProducts}
+											onSelect={(id) => {
+												setProductId(String(id));
+												setPickerOpen(false);
+											}}
+											locale={locale}
+											emptyMessage={tc("noItemFound")}
+											outOfStockLabel={tc("outOfStock")}
+											selectedIds={productId ? [Number(productId)] : []}
+											className="grid-cols-3 sm:grid-cols-4"
+										/>
+									</PopoverContent>
+								</Popover>
+								<div className="flex gap-3 sm:grid sm:grid-cols-[100px_auto]">
+									<Input
+										type="number"
+										min={1}
+										value={quantity}
+										onChange={(event) =>
+											setQuantity(Math.max(1, Number(event.target.value)))
+										}
+									/>
+									<Button
+										className="flex-1"
+										disabled={!productId || addMutation.isPending}
+										onClick={() =>
+											addMutation.mutate({
+												orderId: selectedTable.id,
+												productId: Number(productId),
+												quantity,
+											})
+										}
+									>
+										{addMutation.isPending && (
+											<Loader2Icon className="mr-2 h-4 w-4 animate-spin" />
+										)}
+										{tc("add")}
+									</Button>
+								</div>
 							</div>
 
 							<div className="overflow-x-auto rounded-lg border">
@@ -513,40 +543,4 @@ export default function TablesPage() {
 								onValueChange={setPaymentMethodId}
 							>
 								<SelectTrigger>
-									<SelectValue placeholder={t("selectPaymentMethod")} />
-								</SelectTrigger>
-								<SelectContent>
-									{paymentMethods.map((method) => (
-										<SelectItem key={method.id} value={String(method.id)}>
-											{method.name}
-										</SelectItem>
-									))}
-								</SelectContent>
-							</Select>
-						</div>
-					</div>
-					<DialogFooter>
-						<Button variant="secondary" onClick={() => setCloseDialog(false)}>
-							{tc("cancel")}
-						</Button>
-						<Button
-							disabled={!paymentMethodId || closeMutation.isPending}
-							onClick={() =>
-								selectedTable &&
-								closeMutation.mutate({
-									orderId: selectedTable.id,
-									paymentMethodId: Number(paymentMethodId),
-								})
-							}
-						>
-							{closeMutation.isPending && (
-								<Loader2Icon className="mr-2 h-4 w-4 animate-spin" />
-							)}
-							{t("chargeAndClose")}
-						</Button>
-					</DialogFooter>
-				</DialogContent>
-			</Dialog>
-		</div>
-	);
-}
+					

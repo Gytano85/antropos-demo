@@ -37,6 +37,7 @@ const messages = {
 		remove: "Remove",
 		view: "View",
 		loading: "Loading...",
+		outOfStock: "Out of stock",
 	},
 	nav: {
 		dashboard: "Dashboard",
@@ -118,6 +119,7 @@ const messages = {
 		editDescription: "Edit the details of the product.",
 		addDescription: "Enter the details of the new product.",
 		selectCategory: "Select a category",
+		imageUrl: "Image (URL)",
 		beers: "Beers",
 		cocktails: "Cocktails",
 		bottles: "Bottles",
@@ -267,6 +269,7 @@ const messages = {
 		products: "Products",
 		searchPlaceholder: "Search products...",
 		addProduct: "Add Product",
+		orderSummary: "Order Summary",
 		qty: "Qty",
 		selectProducts: "Select products above to add them to the order",
 		createOrder: "Create Order",
@@ -441,6 +444,51 @@ const messages = {
 		noDemand: "No recent sales",
 		daysValue: "{days} days",
 		noResults: "No products found.",
+		suppliersTitle: "Suppliers",
+		suppliersSubtitle: "Contacts for automatic restocking.",
+		addSupplier: "Add supplier",
+		editSupplier: "Edit supplier",
+		contactName: "Contact person",
+		supplierNotes: "Notes",
+		noSuppliers: "No suppliers registered.",
+		supplierSaved: "Supplier saved.",
+		supplierSaveError: "Could not save the supplier.",
+		supplierDeleted: "Supplier deleted.",
+		supplierDeleteError: "Could not delete the supplier.",
+		rulesTitle: "Automatic restock rules",
+		rulesSubtitle:
+			"When stock drops below the threshold, the supplier is contacted by email and/or SMS.",
+		addRule: "Add rule",
+		editRule: "Edit rule",
+		supplier: "Supplier",
+		noSupplierOption: "No supplier",
+		threshold: "Stock threshold",
+		reorderQty: "Reorder quantity",
+		cooldownHours: "Hours between alerts",
+		autoEmail: "Notify by email",
+		autoSms: "Notify by SMS",
+		ruleActive: "Rule active",
+		contactNow: "Contact now",
+		noRules: "No rules configured.",
+		ruleSaved: "Rule saved.",
+		ruleSaveError: "Could not save the rule.",
+		ruleDeleted: "Rule deleted.",
+		ruleDeleteError: "Could not delete the rule.",
+		contactTriggered: "Contact sent to supplier.",
+		contactError: "Could not contact the supplier.",
+		historyTitle: "Supplier contact history",
+		historySubtitle: "Log of automatic alerts sent by email and SMS.",
+		channel: "Channel",
+		emailStatus: "Email",
+		smsStatus: "SMS",
+		requestedQty: "Requested quantity",
+		stockAtTrigger: "Stock at trigger",
+		noHistory: "No supplier has been contacted yet.",
+		statusSent: "Sent",
+		statusFailed: "Failed",
+		statusSkipped: "Skipped",
+		contactedAt: "Date",
+		errorMessage: "Error",
 	},
 	recipes: {
 		title: "Recipes and preparation stock",
@@ -496,45 +544,4 @@ const messages = {
 		warnings: "Inventory warnings",
 		warningHint:
 			"Differences greater than ±{percent}% between orders, recipes and physical counts are shown.",
-		noWarnings: "No differences outside tolerance.",
-		physicalMismatch: "Physical difference for {ingredient}",
-		mismatchDetail:
-			"Expected: {expected} {unit}. Counted: {counted} {unit}. Variance: {percent}%.",
-		orderMismatch: "Order {order} does not match the recipe for {product}",
-		orderMismatchDetail:
-			"{ingredient}: expected {expected} {unit}, recorded {recorded} {unit}. Variance: {percent}%.",
-	},
-	inventoryAudit: {
-		reviewRequired: "Review possible shortages",
-		allClear: "Inventory within tolerance",
-		explanation:
-			"This screen compares orders, recipes and physical counts. It flags differences greater than ±{percent}%.",
-		notProof:
-			"An alert is not proof of theft; it may also indicate waste, spills, an incorrect recipe or missing entry.",
-		warningCount: "{count} active warning(s)",
-		physicalDifferences: "Physical count differences",
-		orderDifferences: "Orders that do not match",
-		physicalTitle: "Physical shortages or surpluses",
-		physicalHint: "Compares expected system stock against the actual count.",
-		ordersTitle: "Order and consumption differences",
-		ordersHint:
-			"Detects sold products without the expected ingredient deduction.",
-		none: "There are no active warnings in this section.",
-		units: "units",
-		physicalDetail: "Expected: {expected} {unit}. Counted: {counted} {unit}.",
-		orderDetail:
-			"{ingredient}: expected {expected} {unit}, recorded {recorded} {unit}.",
-	},
-	error: {
-		somethingWentWrong: "Sorry, something went wrong",
-	},
-} as const;
-
-export default messages;
-
-// Structural type: same keys, but values are `string` (not literal)
-type DeepStringify<T> = {
-	[K in keyof T]: T[K] extends string ? string : DeepStringify<T[K]>;
-};
-
-export type Messages = DeepStringify<typeof messages>;
+		noWarnings: "No differe

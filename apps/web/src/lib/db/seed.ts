@@ -1,7 +1,13 @@
 import { faker } from "@faker-js/faker";
-import { sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { auth } from "../auth";
 import { db } from ".";
+import {
+	seedBrandingDemo,
+	seedProductImagesDemo,
+	seedShrinkageDemo,
+	seedSuppliersAndRestockDemo,
+} from "./demo-extras";
 import { ensureDemoRecipes } from "./demo-recipes";
 import {
 	cities,
@@ -11,6 +17,7 @@ import {
 	paymentMethods,
 	products,
 	transactions,
+	user,
 } from "./schema";
 
 const DEMO_EMAIL = "test@example.com";
@@ -283,7 +290,33 @@ export async function seed() {
 		.select({ count: sql<number>`count(*)` })
 		.from(paymentMethods);
 
-	if (existing[0].count > 0) return;
+	if (existing[0].count > 0) {
+		// La base ya tiene datos demo de una corrida anterior. Seguimos siendo
+		// idempotentes, pero ahora sembramos (o completamos) las secciones
+		// nuevas — branding, proveedores/reabasto y ejemplos de merma — sin
+		// tocar lo que ya existe.
+		const demoUser = await db.query.user.findFirst({
+			where: eq(user.email, DEMO_EMAIL),
+		});
+
+		if (!demoUser) {
+			console.warn(
+				"seed(): ya hay payment methods pero no se encontró el usuario demo; se omite la siembra adicional.",
+			);
+			return;
+		}
+
+		await ensureDemoRecipes(demoUser.id);
+		await seedBrandingDemo(demoUser.id);
+		await seedSuppliersAndRestockDemo(demoUser.id);
+		await seedShrinkageDemo(demoUser.id);
+		await seedProductImagesDemo(demoUser.id);
+
+		console.log(
+			"seed(): base ya sembrada; se completaron branding, proveedores/reabasto, merma e imágenes de producto.",
+		);
+		return;
+	}
 
 	// ── Payment Methods ──────────────────────────────────────────────────────
 	const [pmCredit, pmDebit, pmCash] = await db
@@ -456,83 +489,14 @@ export async function seed() {
 	// ── Cities (IBGE) ─────────────────────────────────────────────────────────
 	const cityCount = await seedCities();
 
+	// ── Branding, proveedores/reabasto, merma e imágenes de producto ────────
+	await seedBrandingDemo(userId);
+	await seedSuppliersAndRestockDemo(userId);
+	await seedShrinkageDemo(userId);
+	await seedProductImagesDemo(userId);
+
 	console.log(
 		`Seeded: 3 payment methods, 1 demo user (${DEMO_EMAIL} / ${DEMO_PASSWORD}), ` +
 			`${customerValues.length} customers, ${productValues.length} products, ` +
 			`${orderCount} orders, ${expenseCount} expense transactions, ` +
-			`${cityCount} cities`,
-	);
-}
-
-const STATES = [
-	"AC",
-	"AL",
-	"AM",
-	"AP",
-	"BA",
-	"CE",
-	"DF",
-	"ES",
-	"GO",
-	"MA",
-	"MG",
-	"MS",
-	"MT",
-	"PA",
-	"PB",
-	"PE",
-	"PI",
-	"PR",
-	"RJ",
-	"RN",
-	"RO",
-	"RR",
-	"RS",
-	"SC",
-	"SE",
-	"SP",
-	"TO",
-];
-
-async function seedCities(): Promise<number> {
-	const existingCities = await db
-		.select({ count: sql<number>`count(*)` })
-		.from(cities);
-
-	if (existingCities[0].count > 0) return existingCities[0].count;
-
-	let total = 0;
-
-	for (const uf of STATES) {
-		try {
-			const res = await fetch(
-				`https://servicodados.ibge.gov.br/api/v1/localidades/estados/${uf}/municipios`,
-			);
-			if (!res.ok) {
-				console.warn(`Failed to fetch cities for ${uf}: ${res.status}`);
-				continue;
-			}
-
-			const data: Array<{ id: number; nome: string }> = await res.json();
-
-			if (data.length > 0) {
-				// Insert in batches of 500 to avoid query size limits
-				for (let i = 0; i < data.length; i += 500) {
-					const batch = data.slice(i, i + 500);
-					await db.insert(cities).values(
-						batch.map((city) => ({
-							id: city.id,
-							name: city.nome,
-							state_code: uf,
-						})),
-					);
-				}
-				total += data.length;
-			}
-		} catch (err) {
-			console.warn(`Error fetching cities for ${uf}:`, err);
-		}
-	}
-
-	return total;
-}
+			`${cityCount} cities,

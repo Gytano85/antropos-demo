@@ -1,6 +1,7 @@
 "use client";
 
 import { Badge } from "@finopenpos/ui/components/badge";
+import { Button } from "@finopenpos/ui/components/button";
 import {
 	Card,
 	CardContent,
@@ -8,6 +9,19 @@ import {
 	CardHeader,
 	CardTitle,
 } from "@finopenpos/ui/components/card";
+import {
+	DataTable,
+	TableActionButton,
+	TableActions,
+	type Column,
+} from "@finopenpos/ui/components/data-table";
+import {
+	Dialog,
+	DialogContent,
+	DialogFooter,
+	DialogHeader,
+	DialogTitle,
+} from "@finopenpos/ui/components/dialog";
 import { Input } from "@finopenpos/ui/components/input";
 import { Label } from "@finopenpos/ui/components/label";
 import {
@@ -26,18 +40,36 @@ import {
 	TableHeader,
 	TableRow,
 } from "@finopenpos/ui/components/table";
+import { useForm } from "@tanstack/react-form";
 import { useQuery } from "@tanstack/react-query";
 import type { LucideIcon } from "lucide-react";
 import {
 	AlertTriangleIcon,
 	BoxIcon,
 	CalendarClockIcon,
+	FilePenIcon,
+	HistoryIcon,
+	MailIcon,
+	PhoneIcon,
+	PlusCircleIcon,
 	SearchIcon,
+	SendIcon,
 	ShoppingCartIcon,
+	TrashIcon,
+	TruckIcon,
+	Users2Icon,
 } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { useMemo, useState } from "react";
+import { z } from "zod/v4";
+import { DeleteConfirmationDialog } from "@/components/delete-confirmation-dialog";
+import { useCrudMutation } from "@/hooks/use-crud-mutation";
 import { useTRPC } from "@/lib/trpc/client";
+import type { RouterOutputs } from "@/lib/trpc/router";
+
+type Supplier = RouterOutputs["suppliers"]["list"][number];
+type RestockRule = RouterOutputs["restockRules"]["list"][number];
+type RestockAlert = RouterOutputs["restockRules"]["alerts"][number];
 
 export default function RestockingPage() {
 	const trpc = useTRPC();
@@ -249,49 +281,4 @@ export default function RestockingPage() {
 										<TableCell className="text-right font-bold">
 											{item.recommendedQuantity > 0
 												? item.recommendedQuantity
-												: "—"}
-										</TableCell>
-									</TableRow>
-								))}
-								{items.length === 0 && (
-									<TableRow>
-										<TableCell
-											colSpan={8}
-											className="h-24 text-center text-muted-foreground"
-										>
-											{t("noResults")}
-										</TableCell>
-									</TableRow>
-								)}
-							</TableBody>
-						</Table>
-					</div>
-				</CardContent>
-			</Card>
-		</div>
-	);
-}
-
-function SummaryCard({
-	icon: Icon,
-	label,
-	value,
-	accent = "text-foreground",
-}: {
-	icon: LucideIcon;
-	label: string;
-	value: number;
-	accent?: string;
-}) {
-	return (
-		<Card>
-			<CardContent className="flex items-center justify-between p-5">
-				<div>
-					<p className="text-muted-foreground text-sm">{label}</p>
-					<p className={`font-bold text-3xl ${accent}`}>{value}</p>
-				</div>
-				<Icon className={`h-8 w-8 ${accent}`} />
-			</CardContent>
-		</Card>
-	);
-}
+									

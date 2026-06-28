@@ -22,6 +22,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import type { RouterOutputs } from "@/lib/trpc/router";
 import { useTranslations, useLocale } from "next-intl";
 import { formatCurrency } from "@/lib/utils";
+import { ProductPickerGrid } from "@/components/product-picker-grid";
 
 type Product = RouterOutputs["products"]["list"][number];
 type POSProduct = Pick<Product, "id" | "name" | "price" | "in_stock"> & { category: string; quantity: number };
@@ -168,7 +169,7 @@ export default function POSPage() {
   }
 
   return (
-    <div className="w-full max-w-4xl mx-auto">
+    <div className="w-full max-w-6xl mx-auto">
       <Card className="mb-4">
         <CardHeader>
           <CardTitle>{t("saleDetails")}</CardTitle>
@@ -190,30 +191,34 @@ export default function POSPage() {
           </div>
         </CardContent>
       </Card>
-      <Card>
+      <Card className="mb-4">
         <CardHeader>
           <CardTitle>{t("products")}</CardTitle>
-          <div className="flex flex-col sm:flex-row gap-3 !mt-4">
-            <div className="relative flex-1">
-              <SearchIcon className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-              <Input
-                type="text"
-                placeholder={t("searchPlaceholder")}
-                value={productSearch}
-                onChange={(e) => setProductSearch(e.target.value)}
-                className="pl-8"
-              />
-            </div>
-            <Combobox
-              items={filteredProducts.map((p) => ({
-                id: p.id,
-                name: `${p.name} — ${formatCurrency(p.price, locale)} (${p.in_stock} in stock)`,
-              }))}
-              placeholder={t("addProduct")}
-              noSelect
-              onSelect={handleSelectProduct}
+          <div className="relative !mt-4">
+            <SearchIcon className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+            <Input
+              type="text"
+              placeholder={t("searchPlaceholder")}
+              value={productSearch}
+              onChange={(e) => setProductSearch(e.target.value)}
+              className="pl-8"
             />
           </div>
+        </CardHeader>
+        <CardContent>
+          <ProductPickerGrid
+            products={filteredProducts}
+            onSelect={(productId) => handleSelectProduct(productId)}
+            locale={locale}
+            emptyMessage={tc("noItemFound")}
+            outOfStockLabel={tc("outOfStock")}
+            selectedIds={selectedProducts.map((p) => p.id)}
+          />
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader>
+          <CardTitle>{t("orderSummary")}</CardTitle>
         </CardHeader>
         <CardContent>
           {selectedProducts.length === 0 ? (
@@ -309,12 +314,4 @@ export default function POSPage() {
                 className="flex-1 sm:flex-initial"
               >
                 {createOrderMutation.isPending && <Loader2Icon className="h-4 w-4 animate-spin mr-2" />}
-                {t("createOrder")}
-              </Button>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-    </div>
-  );
-}
+             

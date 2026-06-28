@@ -11,6 +11,7 @@ const productSchema = z.object({
 	price: z.number(),
 	in_stock: z.number(),
 	category: z.string().nullable(),
+	image_url: z.string().nullable(),
 	user_uid: z.string(),
 	ncm: z.string().nullable(),
 	cfop: z.string().nullable(),
@@ -88,6 +89,12 @@ export const productsRouter = router({
 				price: z.number().int(),
 				in_stock: z.number().int().min(0),
 				category: z.string().optional(),
+				image_url: z
+					.string()
+					.trim()
+					.max(500)
+					.optional()
+					.or(z.literal("")),
 				ncm: z.string().max(8).optional(),
 				cfop: z.string().max(4).optional(),
 				icms_cst: z.string().max(3).optional(),
@@ -100,7 +107,11 @@ export const productsRouter = router({
 		.mutation(async ({ ctx, input }) => {
 			const [data] = await db
 				.insert(products)
-				.values({ ...input, user_uid: ctx.user.id })
+				.values({
+					...input,
+					image_url: input.image_url || null,
+					user_uid: ctx.user.id,
+				})
 				.returning();
 			return data;
 		}),
@@ -122,6 +133,12 @@ export const productsRouter = router({
 				price: z.number().int().optional(),
 				in_stock: z.number().int().min(0).optional(),
 				category: z.string().optional(),
+				image_url: z
+					.string()
+					.trim()
+					.max(500)
+					.optional()
+					.or(z.literal("")),
 				ncm: z.string().max(8).optional(),
 				cfop: z.string().max(4).optional(),
 				icms_cst: z.string().max(3).optional(),
@@ -132,10 +149,14 @@ export const productsRouter = router({
 		)
 		.output(productSchema)
 		.mutation(async ({ ctx, input }) => {
-			const { id, ...data } = input;
+			const { id, image_url, ...data } = input;
 			const [updated] = await db
 				.update(products)
-				.set({ ...data, user_uid: ctx.user.id })
+				.set({
+					...data,
+					...(image_url !== undefined ? { image_url: image_url || null } : {}),
+					user_uid: ctx.user.id,
+				})
 				.where(and(eq(products.id, id), eq(products.user_uid, ctx.user.id)))
 				.returning();
 			return updated;
@@ -144,20 +165,4 @@ export const productsRouter = router({
 	delete: protectedProcedure
 		.meta({
 			openapi: {
-				method: "DELETE",
-				path: "/products/{id}",
-				tags: ["Products"],
-				summary: "Delete a product",
-			},
-		})
-		.input(z.object({ id: z.number() }))
-		.output(z.object({ success: z.boolean() }))
-		.mutation(async ({ ctx, input }) => {
-			await db
-				.delete(products)
-				.where(
-					and(eq(products.id, input.id), eq(products.user_uid, ctx.user.id)),
-				);
-			return { success: true };
-		}),
-});
+				method: 
