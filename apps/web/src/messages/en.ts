@@ -44,7 +44,8 @@ const messages = {
 		tables: "Tables",
 		digitalMenu: "Digital menu",
 		cashier: "Cashier",
-		products: "Inventory",
+		products: "Products",
+		inventory: "Inventory",
 		restocking: "Restocking",
 		recipes: "Recipes",
 		inventoryAudit: "Inventory audit",
@@ -544,4 +545,60 @@ const messages = {
 		warnings: "Inventory warnings",
 		warningHint:
 			"Differences greater than ±{percent}% between orders, recipes and physical counts are shown.",
-		noWarnings: "No differe
+		noWarnings: "No differences outside tolerance.",
+		physicalMismatch: "Physical difference for {ingredient}",
+		mismatchDetail:
+			"Expected: {expected} {unit}. Counted: {counted} {unit}. Variance: {percent}%.",
+		orderMismatch: "Order {order} does not match the recipe for {product}",
+		orderMismatchDetail:
+			"{ingredient}: expected {expected} {unit}, recorded {recorded} {unit}. Variance: {percent}%.",
+	},
+	inventoryAudit: {
+		reviewRequired: "Review possible shortages",
+		allClear: "Inventory within tolerance",
+		explanation:
+			"This screen compares orders, recipes and physical counts. It flags differences greater than ±{percent}%.",
+		notProof:
+			"An alert is not proof of theft; it may also indicate waste, spills, an incorrect recipe or missing entry.",
+		warningCount: "{count} active warning(s)",
+		physicalDifferences: "Physical count differences",
+		orderDifferences: "Orders that do not match",
+		physicalTitle: "Physical shortages or surpluses",
+		physicalHint: "Compares expected system stock against the actual count.",
+		ordersTitle: "Order and consumption differences",
+		ordersHint:
+			"Detects sold products without the expected ingredient deduction.",
+		none: "There are no active warnings in this section.",
+		units: "units",
+		physicalDetail: "Expected: {expected} {unit}. Counted: {counted} {unit}.",
+		orderDetail:
+			"{ingredient}: expected {expected} {unit}, recorded {recorded} {unit}.",
+	},
+	settings: {
+		title: "White-label settings",
+		subtitle:
+			"Change the company name and color shown in the navigation bar.",
+		companyName: "Company name",
+		companyNameHint: "Shown as the logo text in the navbar.",
+		companyNameRequired: "Company name is required",
+		primaryColor: "Primary color",
+		primaryColorHint: "Used for buttons and highlights across the app.",
+		invalidColor: "Use a valid hex color, e.g. #0f172a",
+		preview: "Preview",
+		previewBrandLabel: "Your brand in the navbar",
+		saved: "Settings saved",
+		saveError: "Error saving settings",
+	},
+	error: {
+		somethingWentWrong: "Sorry, something went wrong",
+	},
+} as const;
+
+export default messages;
+
+// Structural type: same keys, but values are `string` (not literal)
+type DeepStringify<T> = {
+	[K in keyof T]: T[K] extends string ? string : DeepStringify<T[K]>;
+};
+
+export type Messages = DeepStringify<typeof messages>;

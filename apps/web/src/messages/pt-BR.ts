@@ -46,7 +46,8 @@ const messages: Messages = {
 		tables: "Mesas",
 		digitalMenu: "Cardápio digital",
 		cashier: "Caixa",
-		products: "Estoque",
+		products: "Produtos",
+		inventory: "Estoque",
 		restocking: "Reposição",
 		recipes: "Receitas",
 		inventoryAudit: "Auditoria de estoque",
@@ -541,4 +542,61 @@ const messages: Messages = {
 		receiveIngredient: "Receber ingrediente",
 		countIngredient: "Registrar contagem física",
 		quantityReceived: "Quantidade recebida",
-		counte
+		countedQuantity: "Quantidade contada",
+		notes: "Notas",
+		stockUpdated: "Estoque recebido",
+		countSaved: "Contagem salva dentro da tolerância",
+		countWarning: "Contagem salva com diferença maior que 7%",
+		warnings: "Alertas de estoque",
+		warningHint:
+			"São exibidas diferenças maiores que ±{percent}% entre pedidos, receitas e contagens físicas.",
+		noWarnings: "Nenhuma diferença fora da tolerância.",
+		physicalMismatch: "Diferença física em {ingredient}",
+		mismatchDetail:
+			"Esperado: {expected} {unit}. Contado: {counted} {unit}. Variação: {percent}%.",
+		orderMismatch: "O pedido {order} não corresponde à receita de {product}",
+		orderMismatchDetail:
+			"{ingredient}: esperado {expected} {unit}, registrado {recorded} {unit}. Variação: {percent}%.",
+	},
+	inventoryAudit: {
+		reviewRequired: "Revisar possíveis faltas",
+		allClear: "Estoque dentro da tolerância",
+		explanation:
+			"Esta tela compara pedidos, receitas e contagens físicas. Marca diferenças superiores a ±{percent}%.",
+		notProof:
+			"Um alerta não comprova roubo; também pode indicar perda, derramamento, receita incorreta ou lançamento ausente.",
+		warningCount: "{count} alerta(s) ativo(s)",
+		physicalDifferences: "Diferenças na contagem física",
+		orderDifferences: "Pedidos que não correspondem",
+		physicalTitle: "Faltas ou sobras físicas",
+		physicalHint: "Compara o estoque esperado com a contagem real.",
+		ordersTitle: "Diferenças entre pedidos e consumo",
+		ordersHint:
+			"Detecta produtos vendidos sem a baixa esperada dos ingredientes.",
+		none: "Não há alertas ativos nesta seção.",
+		units: "unidades",
+		physicalDetail: "Esperado: {expected} {unit}. Contado: {counted} {unit}.",
+		orderDetail:
+			"{ingredient}: esperado {expected} {unit}, registrado {recorded} {unit}.",
+	},
+	settings: {
+		title: "Configurações de marca",
+		subtitle:
+			"Altere o nome da empresa e a cor exibidos na barra de navegação.",
+		companyName: "Nome da empresa",
+		companyNameHint: "Exibido como o texto do logo na barra de navegação.",
+		companyNameRequired: "O nome da empresa é obrigatório",
+		primaryColor: "Cor principal",
+		primaryColorHint: "Usada em botões e destaques em todo o app.",
+		invalidColor: "Use uma cor hex válida, ex. #0f172a",
+		preview: "Pré-visualização",
+		previewBrandLabel: "Sua marca na barra de navegação",
+		saved: "Configurações salvas",
+		saveError: "Erro ao salvar as configurações",
+	},
+	error: {
+		somethingWentWrong: "Desculpe, algo deu errado",
+	},
+} as const;
+
+export default messages;
