@@ -21,6 +21,7 @@ import {
 	getOrCreatePricingSettings,
 	toSettingsValues,
 } from "@/lib/pricing/settings";
+import { maybeTriggerRestock } from "@/lib/restock/trigger";
 import { protectedProcedure, router } from "../init";
 
 const tableOrderSchema = z.object({
@@ -203,7 +204,7 @@ export const tablesRouter = router({
 				);
 			const openTablesCount = Number(openTablesRows?.count ?? 0);
 
-			return db.transaction(async (tx) => {
+			const result = await db.transaction(async (tx) => {
 				const product = await tx.query.products.findFirst({
 					where: and(
 						eq(products.id, input.productId),
@@ -324,6 +325,12 @@ export const tablesRouter = router({
 				}
 				return updated;
 			});
+
+			// Después de descontar inventario, revisar si hay que avisar al
+			// proveedor de inmediato (fuera de la transacción: una falla al
+			// notificar nunca debe revertir la venta).
+			await maybeTriggerRestock(ctx.user.id, input.productId);
+			return result;
 		}),
 
 	removeItem: protectedProcedure

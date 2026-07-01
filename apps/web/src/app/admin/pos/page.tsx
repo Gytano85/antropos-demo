@@ -314,4 +314,12 @@ export default function POSPage() {
                 className="flex-1 sm:flex-initial"
               >
                 {createOrderMutation.isPending && <Loader2Icon className="h-4 w-4 animate-spin mr-2" />}
-             
+                {t("createOrder")}
+              </Button>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}

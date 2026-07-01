@@ -19,7 +19,6 @@ import {
 	BookOpenIcon,
 	CreditCardIcon,
 	DollarSignIcon,
-	FlaskConicalIcon,
 	LayoutDashboardIcon,
 	type LucideIcon,
 	MenuIcon,
@@ -27,13 +26,12 @@ import {
 	PackageIcon,
 	ReceiptTextIcon,
 	SettingsIcon,
-	ShieldAlertIcon,
 	ShoppingBagIcon,
 	ShoppingCartIcon,
 	TrendingUpIcon,
-	TruckIcon,
 	UsersIcon,
 	UtensilsIcon,
+	WarehouseIcon,
 	XIcon,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
@@ -53,9 +51,7 @@ interface NavItem {
 		| "dashboard"
 		| "cashier"
 		| "products"
-		| "restocking"
-		| "recipes"
-		| "inventoryAudit"
+		| "inventory"
 		| "customers"
 		| "orders"
 		| "paymentMethods"
@@ -64,7 +60,8 @@ interface NavItem {
 		| "fiscalSettings"
 		| "tables"
 		| "digitalMenu"
-		| "dynamicPricing";
+		| "dynamicPricing"
+		| "settings";
 	icon: LucideIcon;
 }
 
@@ -74,13 +71,7 @@ const navItems: NavItem[] = [
 	{ href: "/menu", labelKey: "digitalMenu", icon: BookOpenIcon },
 	{ href: "/admin/cashier", labelKey: "cashier", icon: DollarSignIcon },
 	{ href: "/admin/products", labelKey: "products", icon: PackageIcon },
-	{ href: "/admin/restocking", labelKey: "restocking", icon: TruckIcon },
-	{ href: "/admin/recipes", labelKey: "recipes", icon: FlaskConicalIcon },
-	{
-		href: "/admin/inventory-audit",
-		labelKey: "inventoryAudit",
-		icon: ShieldAlertIcon,
-	},
+	{ href: "/admin/inventory", labelKey: "inventory", icon: WarehouseIcon },
 	{ href: "/admin/customers", labelKey: "customers", icon: UsersIcon },
 	{ href: "/admin/orders", labelKey: "orders", icon: ShoppingBagIcon },
 	{
@@ -96,6 +87,7 @@ const navItems: NavItem[] = [
 		labelKey: "fiscalSettings",
 		icon: SettingsIcon,
 	},
+	{ href: "/admin/settings", labelKey: "settings", icon: SettingsIcon },
 ];
 
 export function AdminLayout({ children }: { children: React.ReactNode }) {
@@ -118,10 +110,9 @@ export function AdminLayout({ children }: { children: React.ReactNode }) {
 		}
 	}
 
-	const pageNames: Record<string, string> = {
-		...Object.fromEntries(navItems.map((item) => [item.href, t(item.labelKey)])),
-		"/admin/settings": t("settings"),
-	};
+	const pageNames: Record<string, string> = Object.fromEntries(
+		navItems.map((item) => [item.href, t(item.labelKey)]),
+	);
 
 	return (
 		<div
@@ -183,9 +174,6 @@ export function AdminLayout({ children }: { children: React.ReactNode }) {
 						<DropdownMenuContent align="end">
 							<DropdownMenuLabel>{t("myAccount")}</DropdownMenuLabel>
 							<DropdownMenuSeparator />
-							<DropdownMenuItem asChild>
-								<Link href="/admin/settings">{t("settings")}</Link>
-							</DropdownMenuItem>
 							<DropdownMenuItem>{t("support")}</DropdownMenuItem>
 							<DropdownMenuSeparator />
 							<DropdownMenuItem onClick={() => logout()}>
@@ -264,4 +252,40 @@ export function AdminLayout({ children }: { children: React.ReactNode }) {
 									<TooltipTrigger asChild>
 										<Link
 											href={href}
-											className={`flex h-10 items
+											className={`flex h-10 items-center rounded-lg transition-colors ${
+												sidebarExpanded
+													? "w-full justify-start gap-3 px-3"
+													: "w-9 justify-center"
+											} ${
+												pathname === href
+													? "bg-accent text-accent-foreground"
+													: "text-muted-foreground"
+											} hover:bg-muted hover:text-foreground`}
+										>
+											<Icon className="h-5 w-5 shrink-0" />
+											<span
+												className={
+													sidebarExpanded
+														? "truncate font-medium text-sm"
+														: "sr-only"
+												}
+											>
+												{t(labelKey)}
+											</span>
+										</Link>
+									</TooltipTrigger>
+									{!sidebarExpanded && (
+										<TooltipContent side="right">{t(labelKey)}</TooltipContent>
+									)}
+								</Tooltip>
+							))}
+						</TooltipProvider>
+					</nav>
+				</aside>
+				<main className="flex-1 overflow-x-hidden p-3 sm:px-6 sm:py-0">
+					{children}
+				</main>
+			</div>
+		</div>
+	);
+}

@@ -543,4 +543,40 @@ export default function TablesPage() {
 								onValueChange={setPaymentMethodId}
 							>
 								<SelectTrigger>
-					
+									<SelectValue placeholder={t("selectPaymentMethod")} />
+								</SelectTrigger>
+								<SelectContent>
+									{paymentMethods.map((method) => (
+										<SelectItem key={method.id} value={String(method.id)}>
+											{method.name}
+										</SelectItem>
+									))}
+								</SelectContent>
+							</Select>
+						</div>
+					</div>
+					<DialogFooter>
+						<Button variant="secondary" onClick={() => setCloseDialog(false)}>
+							{tc("cancel")}
+						</Button>
+						<Button
+							disabled={!paymentMethodId || closeMutation.isPending}
+							onClick={() =>
+								selectedTable &&
+								closeMutation.mutate({
+									orderId: selectedTable.id,
+									paymentMethodId: Number(paymentMethodId),
+								})
+							}
+						>
+							{closeMutation.isPending && (
+								<Loader2Icon className="mr-2 h-4 w-4 animate-spin" />
+							)}
+							{t("chargeAndClose")}
+						</Button>
+					</DialogFooter>
+				</DialogContent>
+			</Dialog>
+		</div>
+	);
+}

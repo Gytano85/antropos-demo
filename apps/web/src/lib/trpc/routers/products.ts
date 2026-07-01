@@ -165,4 +165,20 @@ export const productsRouter = router({
 	delete: protectedProcedure
 		.meta({
 			openapi: {
-				method: 
+				method: "DELETE",
+				path: "/products/{id}",
+				tags: ["Products"],
+				summary: "Delete a product",
+			},
+		})
+		.input(z.object({ id: z.number() }))
+		.output(z.object({ success: z.boolean() }))
+		.mutation(async ({ ctx, input }) => {
+			await db
+				.delete(products)
+				.where(
+					and(eq(products.id, input.id), eq(products.user_uid, ctx.user.id)),
+				);
+			return { success: true };
+		}),
+});
