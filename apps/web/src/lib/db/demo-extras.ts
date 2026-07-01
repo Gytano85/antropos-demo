@@ -424,4 +424,3 @@ export async function seedProductImagesDemo(userId: string) {
 			.where(eq(products.id, row.id));
 	}
 }
-               
