@@ -95,7 +95,7 @@ export async function seedSuppliersAndRestockDemo(userId: string) {
 		)
 		.returning();
 
-	const [licorera, premiumSpirits, vinosNocturna] = insertedSuppliers;
+	const [licorera, premiumSpirits] = insertedSuppliers;
 
 	const lowStockProducts = await db
 		.select({ id: products.id, name: products.name, in_stock: products.in_stock })
@@ -424,3 +424,4 @@ export async function seedProductImagesDemo(userId: string) {
 			.where(eq(products.id, row.id));
 	}
 }
+               
