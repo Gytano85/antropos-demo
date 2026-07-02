@@ -315,20 +315,46 @@ function getProductImageUrl(category: string, name: string) {
 export async function seed() {
 	faker.seed(20260620);
 
+	const [demoUser] = await db
+		.select({ id: user.id })
+		.from(user)
+		.where(sql`${user.email} = ${DEMO_EMAIL}`)
+		.limit(1);
+	const [demoProductCount] = await db
+		.select({ count: sql<number>`count(*)` })
+		.from(products)
+		.where(sql`${products.name} = ${DEMO_PRODUCTS[0].name}`);
+
+	if (demoUser && Number(demoProductCount.count) > 0) {
+		await ensureDemoRecipes(demoUser.id);
+		return;
+	}
+
 	const existing = await db
 		.select({ count: sql<number>`count(*)` })
 		.from(paymentMethods);
 
 	if (existing[0].count > 0) {
-		const [demoUser] = await db
-			.select({ id: user.id })
-			.from(user)
-			.where(sql`${user.email} = ${DEMO_EMAIL}`)
-			.limit(1);
-		if (demoUser) {
-			await ensureDemoRecipes(demoUser.id);
-		}
-		return;
+		await db.execute(sql.raw(`
+			TRUNCATE TABLE
+				ingredient_counts,
+				ingredient_movements,
+				recipe_items,
+				recipes,
+				ingredients,
+				transactions,
+				order_items,
+				orders,
+				customers,
+				products,
+				payment_methods,
+				app_settings,
+				restocking_settings,
+				"session",
+				account,
+				"user"
+			RESTART IDENTITY CASCADE
+		`));
 	}
 
 	// ── Payment Methods ──────────────────────────────────────────────────────
