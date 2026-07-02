@@ -27,7 +27,7 @@ export default function LoginPage() {
           </p>
         </div>
         <Card>
-          <form>
+          <form action={login}>
             <CardContent className="space-y-4 mt-4">
               <div className="grid gap-2">
                 <Label htmlFor="email">{t("email")}</Label>
@@ -54,7 +54,7 @@ export default function LoginPage() {
               </div>
             </CardContent>
             <CardFooter className="flex flex-col gap-4">
-              <Button className="w-full" formAction={login}>
+              <Button className="w-full" type="submit">
                 {t("submit")}
               </Button>
               <p className="text-sm text-center text-muted-foreground">
