@@ -7,25 +7,11 @@ import { Input } from "@finopenpos/ui/components/input";
 import Link from "next/link";
 import { Button } from "@finopenpos/ui/components/button";
 import { MountainIcon } from "lucide-react";
-import { useEffect, useRef } from "react";
 import { useTranslations } from "next-intl";
 import { LocaleSwitcher } from "@/components/locale-switcher";
 
 export default function LoginPage() {
-  const emailRef = useRef<HTMLInputElement>(null);
-  const passwordRef = useRef<HTMLInputElement>(null);
   const t = useTranslations("login");
-
-  function fillDemo() {
-    if (emailRef.current) emailRef.current.value = "test@example.com";
-    if (passwordRef.current) passwordRef.current.value = "test1234";
-  }
-
-  // Autorrellenar credenciales demo al entrar a la página, sin que el
-  // visitante tenga que tocar el botón "usar credenciales de prueba".
-  useEffect(() => {
-    fillDemo();
-  }, []);
 
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-background">
@@ -46,12 +32,11 @@ export default function LoginPage() {
               <div className="grid gap-2">
                 <Label htmlFor="email">{t("email")}</Label>
                 <Input
-                  ref={emailRef}
                   id="email"
                   name="email"
                   type="email"
-                  placeholder={t("emailPlaceholder")}
                   defaultValue="test@example.com"
+                  placeholder={t("emailPlaceholder")}
                   required
                   autoComplete="email"
                 />
@@ -59,7 +44,6 @@ export default function LoginPage() {
               <div className="grid gap-2">
                 <Label htmlFor="password">{t("password")}</Label>
                 <Input
-                  ref={passwordRef}
                   id="password"
                   name="password"
                   type="password"
@@ -72,14 +56,6 @@ export default function LoginPage() {
             <CardFooter className="flex flex-col gap-4">
               <Button className="w-full" formAction={login}>
                 {t("submit")}
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                className="w-full"
-                onClick={fillDemo}
-              >
-                {t("fillDemo")}
               </Button>
               <p className="text-sm text-center text-muted-foreground">
                 {t("noAccount")}{" "}

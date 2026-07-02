@@ -27,7 +27,9 @@
   "scripts": {
     "dev": "turbo -F web dev",
     "dev:all": "turbo dev",
-    "build": "turbo build",
+    "build": "npm --workspace web run build",
+    "postbuild": "node scripts/postbuild-link-output.cjs",
+    "start": "npm --workspace web run start",
     "check-types": "turbo check-types",
     "dev:web": "turbo -F web dev",
     "dev:docs": "turbo -F docs dev",
@@ -39,16 +41,19 @@
     "check": "biome check --write ."
   },
   "dependencies": {
-    "@finopenpos/env": "workspace:*",
-    "dotenv": "catalog:",
-    "zod": "catalog:"
+    "@finopenpos/env": "*",
+    "dotenv": "^17.2.2",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.2.0",
-    "@finopenpos/config": "workspace:*",
+    "@finopenpos/config": "*",
     "@types/node": "^22.13.14",
     "turbo": "^2.8.12",
     "typescript": "^5"
   },
-  "packageManager": "bun@1.3.5"
+  "packageManager": "npm@10.9.0",
+  "engines": {
+    "node": ">=22 <23"
+  }
 }

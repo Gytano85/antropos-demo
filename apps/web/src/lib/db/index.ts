@@ -1,8 +1,17 @@
-import { drizzle } from "drizzle-orm/node-postgres";
+import { PGlite } from "@electric-sql/pglite";
+import { drizzle } from "drizzle-orm/pglite";
+import { mkdirSync } from "node:fs";
 import * as schema from "./schema";
 
-if (!process.env.DATABASE_URL) {
-  throw new Error("DATABASE_URL environment variable is required. Set it in your .env file.");
-}
+const globalForPGlite = globalThis as unknown as {
+  pglite: PGlite | undefined;
+};
 
-export const db = drizzle(process.env.DATABASE_URL, { schema });
+const dataDir = process.env.PGLITE_DATA_DIR || "./data/pglite";
+mkdirSync(dataDir, { recursive: true });
+
+export const pglite = globalForPGlite.pglite ?? new PGlite(dataDir);
+
+globalForPGlite.pglite = pglite;
+
+export const db = drizzle({ client: pglite, schema });

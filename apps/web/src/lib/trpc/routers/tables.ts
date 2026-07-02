@@ -21,7 +21,6 @@ import {
 	getOrCreatePricingSettings,
 	toSettingsValues,
 } from "@/lib/pricing/settings";
-import { maybeTriggerRestock } from "@/lib/restock/trigger";
 import { protectedProcedure, router } from "../init";
 
 const tableOrderSchema = z.object({
@@ -204,7 +203,7 @@ export const tablesRouter = router({
 				);
 			const openTablesCount = Number(openTablesRows?.count ?? 0);
 
-			const result = await db.transaction(async (tx) => {
+			return db.transaction(async (tx) => {
 				const product = await tx.query.products.findFirst({
 					where: and(
 						eq(products.id, input.productId),
@@ -325,12 +324,6 @@ export const tablesRouter = router({
 				}
 				return updated;
 			});
-
-			// Después de descontar inventario, revisar si hay que avisar al
-			// proveedor de inmediato (fuera de la transacción: una falla al
-			// notificar nunca debe revertir la venta).
-			await maybeTriggerRestock(ctx.user.id, input.productId);
-			return result;
 		}),
 
 	removeItem: protectedProcedure
@@ -374,6 +367,100 @@ export const tablesRouter = router({
 					.update(orders)
 					.set({
 						total_amount: sql`${orders.total_amount} - ${item.price * item.quantity}`,
+					})
+					.where(eq(orders.id, input.orderId));
+
+				const updated = await tx.query.orders.findFirst({
+					where: eq(orders.id, input.orderId),
+					with: {
+						orderItems: {
+							with: {
+								product: {
+									columns: { name: true, category: true },
+								},
+							},
+						},
+					},
+				});
+
+				if (!updated) {
+					throw new TRPCError({
+						code: "INTERNAL_SERVER_ERROR",
+						message: "No se pudo actualizar la comanda.",
+					});
+				}
+				return updated;
+			});
+		}),
+
+	decrementItem: protectedProcedure
+		.input(z.object({ orderId: z.number(), itemId: z.number() }))
+		.output(tableOrderSchema)
+		.mutation(async ({ ctx, input }) => {
+			await getOpenTable(ctx.user.id, input.orderId);
+
+			return db.transaction(async (tx) => {
+				const item = await tx.query.orderItems.findFirst({
+					where: and(
+						eq(orderItems.id, input.itemId),
+						eq(orderItems.order_id, input.orderId),
+					),
+				});
+
+				if (!item || !item.product_id) {
+					throw new TRPCError({
+						code: "NOT_FOUND",
+						message: "Producto no encontrado.",
+					});
+				}
+
+				if (item.quantity <= 1) {
+					const recipeManaged = await restoreOrderItemIngredients(
+						tx,
+						ctx.user.id,
+						input.orderId,
+						item.id,
+						"Unidad retirada de la comanda",
+					);
+					await tx.delete(orderItems).where(eq(orderItems.id, item.id));
+
+					if (!recipeManaged) {
+						await tx
+							.update(products)
+							.set({ in_stock: sql`${products.in_stock} + 1` })
+							.where(eq(products.id, item.product_id));
+					}
+				} else {
+					await tx
+						.update(orderItems)
+						.set({ quantity: item.quantity - 1 })
+						.where(eq(orderItems.id, item.id));
+
+					const recipeManagedProductIds = await consumeRecipeIngredients(
+						tx,
+						ctx.user.id,
+						input.orderId,
+						[
+							{
+								orderItemId: item.id,
+								productId: item.product_id,
+								quantity: -1,
+							},
+						],
+					);
+
+					if (!recipeManagedProductIds.has(item.product_id)) {
+						await tx
+							.update(products)
+							.set({ in_stock: sql`${products.in_stock} + 1` })
+							.where(eq(products.id, item.product_id));
+					}
+				}
+
+				await tx
+					.update(orders)
+					.set({
+						total_amount: sql`${orders.total_amount} - ${item.price}`,
 					})
 					.where(eq(orders.id, input.orderId));
 

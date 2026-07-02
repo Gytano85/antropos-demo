@@ -1,13 +1,8 @@
 import { faker } from "@faker-js/faker";
-import { eq, sql } from "drizzle-orm";
+import { sql } from "drizzle-orm";
 import { auth } from "../auth";
+import { productPhotoUrl } from "../product-photos";
 import { db } from ".";
-import {
-	seedBrandingDemo,
-	seedProductImagesDemo,
-	seedShrinkageDemo,
-	seedSuppliersAndRestockDemo,
-} from "./demo-extras";
 import { ensureDemoRecipes } from "./demo-recipes";
 import {
 	cities,
@@ -283,6 +278,40 @@ const DEMO_PRODUCTS = [
 	},
 ] as const;
 
+function getProductImageUrl(category: string, name: string) {
+	const lower = name.toLowerCase();
+	const byName: Record<string, string> = {
+		"corona extra": productPhotoUrl("Corona Extra", category),
+		"modelo especial": productPhotoUrl("Modelo Especial", category),
+		victoria: productPhotoUrl("Victoria", category),
+		heineken: productPhotoUrl("Heineken", category),
+		margarita: productPhotoUrl("Margarita", category),
+		carajillo: productPhotoUrl("Carajillo", category),
+		"gin tonic": productPhotoUrl("Gin Tonic", category),
+		azulito: productPhotoUrl("Azulito", category),
+		"tequila don julio 70": productPhotoUrl("Tequila Don Julio 70", category),
+		"whisky johnnie walker black": productPhotoUrl("Whisky Johnnie Walker Black", category),
+		"vodka grey goose": productPhotoUrl("Vodka Grey Goose", category),
+		"ron zacapa 23": productPhotoUrl("Ron Zacapa 23", category),
+		"agua natural": productPhotoUrl("Agua Natural", category),
+		"agua mineral": productPhotoUrl("Agua Mineral", category),
+		refresco: productPhotoUrl("Refresco", category),
+		"red bull": productPhotoUrl("Red Bull", category),
+		"limonada mineral": productPhotoUrl("Limonada Mineral", category),
+		"papas a la francesa": productPhotoUrl("Papas a la Francesa", category),
+		"nachos con queso": productPhotoUrl("Nachos con Queso", category),
+		"alitas bbq": productPhotoUrl("Alitas BBQ", category),
+		"mini hamburguesas": productPhotoUrl("Mini Hamburguesas", category),
+		"tabla de carnes frías": productPhotoUrl("Tabla de Carnes Frías", category),
+		"cover general": productPhotoUrl("Cover General", category),
+		"cover evento especial": productPhotoUrl("Cover Evento Especial", category),
+		"reservación mesa vip": productPhotoUrl("Reservación Mesa VIP", category),
+		"servicio de mezcladores": productPhotoUrl("Servicio de Mezcladores", category),
+	};
+	if (byName[lower]) return byName[lower];
+	return productPhotoUrl(name, category);
+}
+
 export async function seed() {
 	faker.seed(20260620);
 
@@ -291,30 +320,14 @@ export async function seed() {
 		.from(paymentMethods);
 
 	if (existing[0].count > 0) {
-		// La base ya tiene datos demo de una corrida anterior. Seguimos siendo
-		// idempotentes, pero ahora sembramos (o completamos) las secciones
-		// nuevas — branding, proveedores/reabasto y ejemplos de merma — sin
-		// tocar lo que ya existe.
-		const demoUser = await db.query.user.findFirst({
-			where: eq(user.email, DEMO_EMAIL),
-		});
-
-		if (!demoUser) {
-			console.warn(
-				"seed(): ya hay payment methods pero no se encontró el usuario demo; se omite la siembra adicional.",
-			);
-			return;
+		const [demoUser] = await db
+			.select({ id: user.id })
+			.from(user)
+			.where(sql`${user.email} = ${DEMO_EMAIL}`)
+			.limit(1);
+		if (demoUser) {
+			await ensureDemoRecipes(demoUser.id);
 		}
-
-		await ensureDemoRecipes(demoUser.id);
-		await seedBrandingDemo(demoUser.id);
-		await seedSuppliersAndRestockDemo(demoUser.id);
-		await seedShrinkageDemo(demoUser.id);
-		await seedProductImagesDemo(demoUser.id);
-
-		console.log(
-			"seed(): base ya sembrada; se completaron branding, proveedores/reabasto, merma e imágenes de producto.",
-		);
 		return;
 	}
 
@@ -355,6 +368,7 @@ export async function seed() {
 	const productValues = DEMO_PRODUCTS.map((product) => ({
 		name: product.name,
 		description: product.description,
+		image_url: getProductImageUrl(product.category, product.name),
 		price: product.price,
 		in_stock: product.stock,
 		user_uid: userId,
@@ -489,17 +503,11 @@ export async function seed() {
 	// ── Cities (IBGE) ─────────────────────────────────────────────────────────
 	const cityCount = await seedCities();
 
-	// ── Branding, proveedores/reabasto, merma e imágenes de producto ────────
-	await seedBrandingDemo(userId);
-	await seedSuppliersAndRestockDemo(userId);
-	await seedShrinkageDemo(userId);
-	await seedProductImagesDemo(userId);
-
 	console.log(
 		`Seeded: 3 payment methods, 1 demo user (${DEMO_EMAIL} / ${DEMO_PASSWORD}), ` +
 			`${customerValues.length} customers, ${productValues.length} products, ` +
 			`${orderCount} orders, ${expenseCount} expense transactions, ` +
-		`${cityCount} cities, branding, suppliers/restock demo, shrinkage demo, product images`,
+			`${cityCount} cities`,
 	);
 }
 

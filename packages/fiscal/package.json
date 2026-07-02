@@ -20,7 +20,7 @@
     "xml-crypto": "^6.1.2"
   },
   "devDependencies": {
-    "@finopenpos/config": "workspace:*",
+    "@finopenpos/config": "*",
     "@types/bun": "^1.3.9",
     "typescript": "^5"
   }

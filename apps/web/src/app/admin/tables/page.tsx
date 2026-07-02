@@ -18,52 +18,36 @@ import {
 import { Input } from "@finopenpos/ui/components/input";
 import { Label } from "@finopenpos/ui/components/label";
 import {
-	Popover,
-	PopoverContent,
-	PopoverTrigger,
-} from "@finopenpos/ui/components/popover";
-import {
 	Select,
 	SelectContent,
 	SelectItem,
 	SelectTrigger,
 	SelectValue,
 } from "@finopenpos/ui/components/select";
-import {
-	Table,
-	TableBody,
-	TableCell,
-	TableHead,
-	TableHeader,
-	TableRow,
-} from "@finopenpos/ui/components/table";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-	AlertTriangleIcon,
 	Clock3Icon,
 	DoorOpenIcon,
 	Loader2Icon,
+	MinusIcon,
 	PlusIcon,
 	ReceiptIcon,
+	SearchIcon,
 	Trash2Icon,
-	TrendingDownIcon,
-	TrendingUpIcon,
 	UsersIcon,
 	UtensilsIcon,
 } from "lucide-react";
-import { useLocale, useTranslations } from "next-intl";
+import { useLocale } from "next-intl";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
+import { ProductImage } from "@/components/product-image";
 import { useTRPC } from "@/lib/trpc/client";
 import { formatCurrency } from "@/lib/utils";
-import { ProductPickerGrid } from "@/components/product-picker-grid";
 
 export default function TablesPage() {
 	const trpc = useTRPC();
 	const queryClient = useQueryClient();
 	const locale = useLocale();
-	const t = useTranslations("tables");
-	const tc = useTranslations("common");
 
 	const { data: openTables = [], isLoading } = useQuery(
 		trpc.tables.listOpen.queryOptions(),
@@ -72,29 +56,50 @@ export default function TablesPage() {
 	const { data: paymentMethods = [] } = useQuery(
 		trpc.paymentMethods.list.queryOptions(),
 	);
-	const { data: pricingStatus } = useQuery(
-		trpc.pricing.getStatus.queryOptions(undefined, { refetchInterval: 15_000 }),
-	);
 
 	const [selectedId, setSelectedId] = useState<number | null>(null);
 	const [newTableName, setNewTableName] = useState("");
 	const [newPartySize, setNewPartySize] = useState(1);
 	const [openDialog, setOpenDialog] = useState(false);
 	const [closeDialog, setCloseDialog] = useState(false);
-	const [productId, setProductId] = useState("");
-	const [quantity, setQuantity] = useState(1);
-	const [pickerOpen, setPickerOpen] = useState(false);
 	const [paymentMethodId, setPaymentMethodId] = useState("");
 	const [partySizeDraft, setPartySizeDraft] = useState<number | null>(null);
+	const [search, setSearch] = useState("");
+	const [category, setCategory] = useState("all");
 
 	const selectedTable =
 		openTables.find((table) => table.id === selectedId) ??
 		openTables[0] ??
 		null;
 
-	const selectedTableStatus = selectedTable
-		? pricingStatus?.tables.find((table) => table.orderId === selectedTable.id)
-		: undefined;
+	const categories = useMemo(() => {
+		const values = new Set(
+			products.map((product) => product.category).filter(Boolean),
+		);
+		return ["all", ...Array.from(values)] as string[];
+	}, [products]);
+
+	const filteredProducts = useMemo(() => {
+		const term = search.trim().toLowerCase();
+		return products
+			.filter((product) => product.in_stock > 0)
+			.filter((product) => category === "all" || product.category === category)
+			.filter(
+				(product) =>
+					!term ||
+					product.name.toLowerCase().includes(term) ||
+					(product.category ?? "").toLowerCase().includes(term),
+			);
+	}, [category, products, search]);
+
+	const totals = useMemo(() => {
+		const items = selectedTable?.orderItems ?? [];
+		return {
+			items: items.reduce((total, item) => total + item.quantity, 0),
+			lines: items.length,
+			total: selectedTable?.total_amount ?? 0,
+		};
+	}, [selectedTable]);
 
 	const refresh = async () => {
 		await Promise.all([
@@ -102,7 +107,6 @@ export default function TablesPage() {
 			queryClient.invalidateQueries(trpc.orders.list.queryOptions()),
 			queryClient.invalidateQueries(trpc.products.list.queryOptions()),
 			queryClient.invalidateQueries(trpc.dashboard.stats.queryOptions()),
-			queryClient.invalidateQueries(trpc.pricing.getStatus.queryOptions()),
 		]);
 	};
 
@@ -114,7 +118,7 @@ export default function TablesPage() {
 				setNewPartySize(1);
 				setSelectedId(table.id);
 				await refresh();
-				toast.success(t("opened"));
+				toast.success("Mesa abierta");
 			},
 			onError: (error) => toast.error(error.message),
 		}),
@@ -125,7 +129,7 @@ export default function TablesPage() {
 			onSuccess: async () => {
 				setPartySizeDraft(null);
 				await refresh();
-				toast.success(t("partySizeUpdated"));
+				toast.success("Personas actualizadas");
 			},
 			onError: (error) => toast.error(error.message),
 		}),
@@ -134,10 +138,17 @@ export default function TablesPage() {
 	const addMutation = useMutation(
 		trpc.tables.addItem.mutationOptions({
 			onSuccess: async () => {
-				setProductId("");
-				setQuantity(1);
 				await refresh();
-				toast.success(t("itemAdded"));
+				toast.success("Producto agregado");
+			},
+			onError: (error) => toast.error(error.message),
+		}),
+	);
+
+	const decrementMutation = useMutation(
+		trpc.tables.decrementItem.mutationOptions({
+			onSuccess: async () => {
+				await refresh();
 			},
 			onError: (error) => toast.error(error.message),
 		}),
@@ -147,7 +158,7 @@ export default function TablesPage() {
 		trpc.tables.removeItem.mutationOptions({
 			onSuccess: async () => {
 				await refresh();
-				toast.success(t("itemRemoved"));
+				toast.success("Producto retirado");
 			},
 			onError: (error) => toast.error(error.message),
 		}),
@@ -160,20 +171,23 @@ export default function TablesPage() {
 				setPaymentMethodId("");
 				setSelectedId(null);
 				await refresh();
-				toast.success(t("closed"));
+				toast.success("Mesa cerrada");
 			},
 			onError: (error) => toast.error(error.message),
 		}),
 	);
 
-	const availableProducts = useMemo(
-		() => products.filter((product) => product.in_stock > 0),
-		[products],
-	);
-
-	const selectedPickerProduct = availableProducts.find(
-		(product) => String(product.id) === productId,
-	);
+	const addProduct = (productId: number, quantity = 1) => {
+		if (!selectedTable) {
+			toast.error("Selecciona o abre una mesa.");
+			return;
+		}
+		addMutation.mutate({
+			orderId: selectedTable.id,
+			productId,
+			quantity,
+		});
+	};
 
 	if (isLoading) {
 		return (
@@ -184,105 +198,116 @@ export default function TablesPage() {
 	}
 
 	return (
-		<div className="grid gap-4 lg:grid-cols-[320px_1fr]">
+		<div className="space-y-5">
+			<div className="flex flex-wrap items-center justify-between gap-3">
+				<div>
+					<h1 className="font-semibold text-2xl">Comandas</h1>
+					<p className="text-muted-foreground text-sm">
+						Mesas abiertas, consumo activo y cierre de cuenta.
+					</p>
+				</div>
+				<Button onClick={() => setOpenDialog(true)}>
+					<PlusIcon className="mr-2 h-4 w-4" />
+					Abrir mesa
+				</Button>
+			</div>
+
 			<Card>
-				<CardHeader className="flex flex-row items-center justify-between">
-					<div>
-						<CardTitle>{t("openTables")}</CardTitle>
-						<p className="mt-1 text-muted-foreground text-sm">
-							{t("openCount", { count: openTables.length })}
-						</p>
-					</div>
-					<Button size="sm" onClick={() => setOpenDialog(true)}>
-						<PlusIcon className="mr-2 h-4 w-4" />
-						{t("openTable")}
-					</Button>
+				<CardHeader className="pb-3">
+					<CardTitle className="text-base">Mesas</CardTitle>
 				</CardHeader>
-				<CardContent className="space-y-2">
+				<CardContent>
 					{openTables.length === 0 ? (
-						<div className="flex flex-col items-center gap-3 py-10 text-center text-muted-foreground">
+						<div className="flex flex-col items-center gap-3 rounded-xl border border-dashed py-10 text-center text-muted-foreground">
 							<DoorOpenIcon className="h-10 w-10" />
-							<p>{t("noOpenTables")}</p>
+							<p>No hay mesas abiertas.</p>
+							<Button variant="outline" onClick={() => setOpenDialog(true)}>
+								Abrir primera mesa
+							</Button>
 						</div>
 					) : (
-						openTables.map((table) => (
-							<button
-								key={table.id}
-								type="button"
-								onClick={() => {
-									setSelectedId(table.id);
-									setPartySizeDraft(null);
-								}}
-								className={`w-full rounded-lg border p-3 text-left transition-colors ${
-									selectedTable?.id === table.id
-										? "border-primary bg-accent"
-										: "hover:bg-muted"
-								}`}
-							>
-								<div className="flex items-center justify-between gap-2">
-									<span className="font-semibold">
-										{table.table_name ?? t("unnamedTable")}
-									</span>
-									<span className="font-medium text-sm">
-										{formatCurrency(table.total_amount, locale)}
-									</span>
-								</div>
-								<div className="mt-2 flex items-center gap-1 text-muted-foreground text-xs">
-									<Clock3Icon className="h-3.5 w-3.5" />
-									{table.created_at
-										? new Date(table.created_at).toLocaleTimeString(locale, {
-												hour: "2-digit",
-												minute: "2-digit",
-											})
-										: ""}
-									<span>·</span>
-									<span>{t("items", { count: table.orderItems.length })}</span>
-								</div>
-							</button>
-						))
+						<div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+							{openTables.map((table) => {
+								const active = selectedTable?.id === table.id;
+								const itemCount = table.orderItems.reduce(
+									(total, item) => total + item.quantity,
+									0,
+								);
+								return (
+									<button
+										key={table.id}
+										type="button"
+										onClick={() => {
+											setSelectedId(table.id);
+											setPartySizeDraft(null);
+										}}
+										className={`rounded-xl border p-4 text-left shadow-sm transition ${
+											active
+												? "border-primary bg-primary/5 ring-1 ring-primary"
+												: "bg-card hover:border-primary/50 hover:shadow-md"
+										}`}
+									>
+										<div className="flex items-start justify-between gap-2">
+											<div>
+												<p className="font-semibold text-lg">
+													{table.table_name ?? "Mesa"}
+												</p>
+												<p className="text-muted-foreground text-xs">
+													Comanda #{table.id}
+												</p>
+											</div>
+											<Badge variant={itemCount > 0 ? "default" : "outline"}>
+												{itemCount > 0 ? "Ocupada" : "Nueva"}
+											</Badge>
+										</div>
+										<div className="mt-4 flex items-center justify-between text-sm">
+											<span className="flex items-center gap-1 text-muted-foreground">
+												<Clock3Icon className="h-3.5 w-3.5" />
+												{table.created_at
+													? new Date(table.created_at).toLocaleTimeString(locale, {
+															hour: "2-digit",
+															minute: "2-digit",
+														})
+													: "--:--"}
+											</span>
+											<span>{itemCount} prod.</span>
+										</div>
+										<p className="mt-3 font-bold text-xl">
+											{formatCurrency(table.total_amount, locale)}
+										</p>
+									</button>
+								);
+							})}
+						</div>
 					)}
 				</CardContent>
 			</Card>
 
-			<Card>
-				{selectedTable ? (
-					<>
-						<CardHeader className="flex flex-row items-center justify-between gap-4">
-							<div>
-								<CardTitle className="flex items-center gap-2">
-									<UtensilsIcon className="h-5 w-5" />
-									{selectedTable.table_name}
-								</CardTitle>
-								<p className="mt-1 text-muted-foreground text-sm">
-									{t("activeCommand", { id: selectedTable.id })}
-								</p>
-							</div>
-							<Button
-								onClick={() => setCloseDialog(true)}
-								disabled={selectedTable.orderItems.length === 0}
-							>
-								<ReceiptIcon className="mr-2 h-4 w-4" />
-								{t("closeTable")}
-							</Button>
-						</CardHeader>
-						<CardContent className="space-y-5">
-							<div className="flex flex-wrap items-center gap-3 rounded-lg border bg-muted/30 p-3">
-								<div className="flex items-center gap-2">
+			{selectedTable ? (
+				<div className="grid gap-5 xl:grid-cols-[1fr_420px]">
+					<Card>
+						<CardHeader className="space-y-4">
+							<div className="flex flex-wrap items-center justify-between gap-3">
+								<div>
+									<CardTitle className="flex items-center gap-2">
+										<UtensilsIcon className="h-5 w-5" />
+										Agregar a {selectedTable.table_name}
+									</CardTitle>
+									<p className="mt-1 text-muted-foreground text-sm">
+										Busca productos o usa las categorías.
+									</p>
+								</div>
+								<div className="flex items-center gap-2 rounded-lg border px-3 py-2">
 									<UsersIcon className="h-4 w-4 text-muted-foreground" />
-									<Label htmlFor="partySizeEdit" className="text-sm">
-										{t("partySize")}
-									</Label>
+									<span className="text-sm">Personas</span>
 									<Input
-										id="partySizeEdit"
 										type="number"
 										min={1}
 										max={999}
 										className="h-8 w-20"
 										value={partySizeDraft ?? selectedTable.party_size}
 										onChange={(event) =>
-											setPartySizeDraft(
-												Math.max(1, Number(event.target.value)),
-											)
+											setPartySizeDraft(Math.max(1, Number(event.target.value)))
 										}
 									/>
 									{partySizeDraft !== null &&
@@ -297,197 +322,225 @@ export default function TablesPage() {
 													})
 												}
 											>
-												{setPartySizeMutation.isPending && (
-													<Loader2Icon className="mr-1 h-3.5 w-3.5 animate-spin" />
-												)}
-												{t("savePartySize")}
+												Guardar
 											</Button>
 										)}
 								</div>
+							</div>
 
-								{pricingStatus?.settings.enabled &&
-									pricingStatus.occupancyAdjustmentPct !== 0 && (
-										<Badge
-											variant={
-												pricingStatus.occupancyAdjustmentPct > 0
-													? "destructive"
-													: "income"
-											}
-											className="gap-1"
+							<div className="flex flex-col gap-3 lg:flex-row">
+								<div className="relative flex-1">
+									<SearchIcon className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+									<Input
+										value={search}
+										onChange={(event) => setSearch(event.target.value)}
+										placeholder="Buscar bebida, botella, alimento..."
+										className="pl-9"
+									/>
+								</div>
+								<div className="flex gap-2 overflow-x-auto pb-1">
+									{categories.map((item) => (
+										<Button
+											key={item}
+											type="button"
+											variant={category === item ? "default" : "outline"}
+											size="sm"
+											onClick={() => setCategory(item)}
+											className="whitespace-nowrap capitalize"
 										>
-											{pricingStatus.occupancyAdjustmentPct > 0 ? (
-												<TrendingUpIcon className="h-3.5 w-3.5" />
-											) : (
-												<TrendingDownIcon className="h-3.5 w-3.5" />
-											)}
-											{t("occupancyAdjustment", {
-												pct:
-													(pricingStatus.occupancyAdjustmentPct > 0
-														? "+"
-														: "") + pricingStatus.occupancyAdjustmentPct,
-											})}
-										</Badge>
-									)}
+											{item === "all" ? "Todo" : item.replace("_", " ")}
+										</Button>
+									))}
+								</div>
+							</div>
+						</CardHeader>
+						<CardContent>
+							<div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
+								{filteredProducts.map((product) => (
+									<button
+										key={product.id}
+										type="button"
+										disabled={addMutation.isPending}
+										onClick={() => addProduct(product.id)}
+										className="overflow-hidden rounded-xl border bg-card text-left shadow-sm transition hover:-translate-y-0.5 hover:border-primary hover:shadow-md disabled:cursor-wait disabled:opacity-70"
+									>
+										<ProductImage
+											src={product.image_url}
+											category={product.category}
+											alt={product.name}
+											className="h-28 w-full rounded-none"
+										/>
+										<div className="space-y-2 p-3">
+											<div className="flex items-start justify-between gap-2">
+												<p className="line-clamp-2 font-semibold">{product.name}</p>
+												<p className="font-semibold text-primary">
+													{formatCurrency(product.price, locale)}
+												</p>
+											</div>
+											<div className="flex items-center justify-between text-muted-foreground text-xs">
+												<span className="capitalize">
+													{product.category?.replace("_", " ") ?? "producto"}
+												</span>
+												<span>{product.in_stock} disp.</span>
+											</div>
+										</div>
+									</button>
+								))}
+								{filteredProducts.length === 0 && (
+									<div className="col-span-full rounded-xl border border-dashed py-12 text-center text-muted-foreground">
+										No hay productos para esta búsqueda.
+									</div>
+								)}
+							</div>
+						</CardContent>
+					</Card>
 
-								{selectedTableStatus?.flagged && (
-									<Badge variant="destructive" className="gap-1">
-										<AlertTriangleIcon className="h-3.5 w-3.5" />
-										{t("possibleOverconsumption")}
-									</Badge>
+					<Card className="xl:sticky xl:top-4 xl:self-start">
+						<CardHeader className="border-b">
+							<div className="flex items-start justify-between gap-3">
+								<div>
+									<CardTitle className="flex items-center gap-2">
+										<ReceiptIcon className="h-5 w-5" />
+										{selectedTable.table_name}
+									</CardTitle>
+									<p className="mt-1 text-muted-foreground text-sm">
+										{totals.lines} líneas · {totals.items} productos
+									</p>
+								</div>
+								<Badge>Abierta</Badge>
+							</div>
+						</CardHeader>
+						<CardContent className="space-y-4 pt-4">
+							<div className="max-h-[520px] space-y-3 overflow-y-auto pr-1">
+								{selectedTable.orderItems.length === 0 ? (
+									<div className="rounded-xl border border-dashed py-12 text-center text-muted-foreground">
+										<p>Comanda vacía.</p>
+										<p className="text-xs">Toca un producto para agregarlo.</p>
+									</div>
+								) : (
+									selectedTable.orderItems.map((item) => (
+										<div key={item.id} className="rounded-xl border p-3">
+											<div className="flex items-start justify-between gap-3">
+												<div>
+													<p className="font-semibold">
+														{item.product?.name ?? "Producto eliminado"}
+													</p>
+													<p className="text-muted-foreground text-xs capitalize">
+														{item.product?.category?.replace("_", " ") ?? "sin categoría"}
+													</p>
+												</div>
+												<p className="font-semibold">
+													{formatCurrency(item.price * item.quantity, locale)}
+												</p>
+											</div>
+											<div className="mt-3 flex items-center justify-between gap-3">
+												<div className="flex items-center rounded-lg border">
+													<Button
+														type="button"
+														variant="ghost"
+														size="icon"
+														disabled={decrementMutation.isPending}
+														onClick={() =>
+															decrementMutation.mutate({
+																orderId: selectedTable.id,
+																itemId: item.id,
+															})
+														}
+													>
+														<MinusIcon className="h-4 w-4" />
+													</Button>
+													<span className="w-10 text-center font-semibold">
+														{item.quantity}
+													</span>
+													<Button
+														type="button"
+														variant="ghost"
+														size="icon"
+														disabled={addMutation.isPending || !item.product_id}
+														onClick={() =>
+															item.product_id && addProduct(item.product_id)
+														}
+													>
+														<PlusIcon className="h-4 w-4" />
+													</Button>
+												</div>
+												<div className="flex items-center gap-2">
+													<span className="text-muted-foreground text-sm">
+														{formatCurrency(item.price, locale)} c/u
+													</span>
+													<Button
+														type="button"
+														size="icon"
+														variant="ghost"
+														disabled={removeMutation.isPending}
+														onClick={() =>
+															removeMutation.mutate({
+																orderId: selectedTable.id,
+																itemId: item.id,
+															})
+														}
+													>
+														<Trash2Icon className="h-4 w-4" />
+													</Button>
+												</div>
+											</div>
+										</div>
+									))
 								)}
 							</div>
 
-							<div className="space-y-3 rounded-lg border bg-muted/30 p-3">
-								<Popover open={pickerOpen} onOpenChange={setPickerOpen}>
-									<PopoverTrigger asChild>
-										<Button
-											variant="outline"
-											className="w-full justify-start font-normal"
-										>
-											{selectedPickerProduct
-												? `${selectedPickerProduct.name} · ${formatCurrency(selectedPickerProduct.price, locale)}`
-												: t("selectProduct")}
-										</Button>
-									</PopoverTrigger>
-									<PopoverContent
-										align="start"
-										className="w-[min(92vw,32rem)] max-h-80 overflow-y-auto p-3"
-									>
-										<ProductPickerGrid
-											products={availableProducts}
-											onSelect={(id) => {
-												setProductId(String(id));
-												setPickerOpen(false);
-											}}
-											locale={locale}
-											emptyMessage={tc("noItemFound")}
-											outOfStockLabel={tc("outOfStock")}
-											selectedIds={productId ? [Number(productId)] : []}
-											className="grid-cols-3 sm:grid-cols-4"
-										/>
-									</PopoverContent>
-								</Popover>
-								<div className="flex gap-3 sm:grid sm:grid-cols-[100px_auto]">
-									<Input
-										type="number"
-										min={1}
-										value={quantity}
-										onChange={(event) =>
-											setQuantity(Math.max(1, Number(event.target.value)))
-										}
-									/>
-									<Button
-										className="flex-1"
-										disabled={!productId || addMutation.isPending}
-										onClick={() =>
-											addMutation.mutate({
-												orderId: selectedTable.id,
-												productId: Number(productId),
-												quantity,
-											})
-										}
-									>
-										{addMutation.isPending && (
-											<Loader2Icon className="mr-2 h-4 w-4 animate-spin" />
-										)}
-										{tc("add")}
-									</Button>
+							<div className="space-y-2 border-t pt-4">
+								<div className="flex items-center justify-between text-sm">
+									<span className="text-muted-foreground">Subtotal</span>
+									<span>{formatCurrency(totals.total, locale)}</span>
 								</div>
-							</div>
-
-							<div className="overflow-x-auto rounded-lg border">
-								<Table>
-									<TableHeader>
-										<TableRow>
-											<TableHead>{t("product")}</TableHead>
-											<TableHead>{t("quantity")}</TableHead>
-											<TableHead>{tc("price")}</TableHead>
-											<TableHead>{tc("total")}</TableHead>
-											<TableHead className="w-12" />
-										</TableRow>
-									</TableHeader>
-									<TableBody>
-										{selectedTable.orderItems.length === 0 ? (
-											<TableRow>
-												<TableCell
-													colSpan={5}
-													className="h-28 text-center text-muted-foreground"
-												>
-													{t("emptyCommand")}
-												</TableCell>
-											</TableRow>
-										) : (
-											selectedTable.orderItems.map((item) => (
-												<TableRow key={item.id}>
-													<TableCell className="font-medium">
-														{item.product?.name ?? t("deletedProduct")}
-													</TableCell>
-													<TableCell>{item.quantity}</TableCell>
-													<TableCell>
-														{formatCurrency(item.price, locale)}
-													</TableCell>
-													<TableCell>
-														{formatCurrency(item.price * item.quantity, locale)}
-													</TableCell>
-													<TableCell>
-														<Button
-															size="icon"
-															variant="ghost"
-															disabled={removeMutation.isPending}
-															onClick={() =>
-																removeMutation.mutate({
-																	orderId: selectedTable.id,
-																	itemId: item.id,
-																})
-															}
-														>
-															<Trash2Icon className="h-4 w-4" />
-															<span className="sr-only">{tc("remove")}</span>
-														</Button>
-													</TableCell>
-												</TableRow>
-											))
-										)}
-									</TableBody>
-								</Table>
-							</div>
-
-							<div className="flex justify-end border-t pt-4">
-								<div className="text-right">
-									<p className="text-muted-foreground text-sm">{tc("total")}</p>
-									<p className="font-bold text-3xl">
-										{formatCurrency(selectedTable.total_amount, locale)}
-									</p>
+								<div className="flex items-center justify-between text-lg">
+									<span className="font-semibold">Total</span>
+									<span className="font-bold text-2xl">
+										{formatCurrency(totals.total, locale)}
+									</span>
 								</div>
+								<Button
+									className="w-full"
+									size="lg"
+									disabled={selectedTable.orderItems.length === 0}
+									onClick={() => setCloseDialog(true)}
+								>
+									<ReceiptIcon className="mr-2 h-4 w-4" />
+									Cobrar y cerrar
+								</Button>
 							</div>
 						</CardContent>
-					</>
-				) : (
-					<CardContent className="flex min-h-[420px] flex-col items-center justify-center gap-3 text-center text-muted-foreground">
+					</Card>
+				</div>
+			) : (
+				<Card>
+					<CardContent className="flex min-h-[320px] flex-col items-center justify-center gap-3 text-center text-muted-foreground">
 						<UtensilsIcon className="h-12 w-12" />
-						<p>{t("selectOrOpen")}</p>
+						<p>Abre una mesa para iniciar una comanda.</p>
+						<Button onClick={() => setOpenDialog(true)}>Abrir mesa</Button>
 					</CardContent>
-				)}
-			</Card>
+				</Card>
+			)}
 
 			<Dialog open={openDialog} onOpenChange={setOpenDialog}>
 				<DialogContent>
 					<DialogHeader>
-						<DialogTitle>{t("openTable")}</DialogTitle>
+						<DialogTitle>Abrir mesa</DialogTitle>
 					</DialogHeader>
 					<div className="space-y-4 py-3">
 						<div className="space-y-2">
-							<Label htmlFor="tableName">{t("tableName")}</Label>
+							<Label htmlFor="tableName">Nombre de mesa</Label>
 							<Input
 								id="tableName"
 								autoFocus
-								placeholder={t("tablePlaceholder")}
+								placeholder="Ej. Mesa 4, VIP 2, Barra 1"
 								value={newTableName}
 								onChange={(event) => setNewTableName(event.target.value)}
 							/>
 						</div>
 						<div className="space-y-2">
-							<Label htmlFor="partySize">{t("partySize")}</Label>
+							<Label htmlFor="partySize">Personas</Label>
 							<Input
 								id="partySize"
 								type="number"
@@ -501,8 +554,8 @@ export default function TablesPage() {
 						</div>
 					</div>
 					<DialogFooter>
-						<Button variant="secondary" onClick={() => setOpenDialog(false)}>
-							{tc("cancel")}
+						<Button variant="outline" onClick={() => setOpenDialog(false)}>
+							Cancelar
 						</Button>
 						<Button
 							disabled={!newTableName.trim() || openMutation.isPending}
@@ -516,7 +569,7 @@ export default function TablesPage() {
 							{openMutation.isPending && (
 								<Loader2Icon className="mr-2 h-4 w-4 animate-spin" />
 							)}
-							{t("startCommand")}
+							Iniciar comanda
 						</Button>
 					</DialogFooter>
 				</DialogContent>
@@ -525,25 +578,20 @@ export default function TablesPage() {
 			<Dialog open={closeDialog} onOpenChange={setCloseDialog}>
 				<DialogContent>
 					<DialogHeader>
-						<DialogTitle>{t("closeTable")}</DialogTitle>
+						<DialogTitle>Cobrar mesa</DialogTitle>
 					</DialogHeader>
 					<div className="space-y-4 py-3">
-						<div className="rounded-lg bg-muted p-4 text-center">
-							<p className="text-muted-foreground text-sm">
-								{t("amountToPay")}
-							</p>
+						<div className="rounded-xl bg-muted p-4 text-center">
+							<p className="text-muted-foreground text-sm">Total a pagar</p>
 							<p className="font-bold text-3xl">
 								{formatCurrency(selectedTable?.total_amount ?? 0, locale)}
 							</p>
 						</div>
 						<div className="space-y-2">
-							<Label>{t("paymentMethod")}</Label>
-							<Select
-								value={paymentMethodId}
-								onValueChange={setPaymentMethodId}
-							>
+							<Label>Método de pago</Label>
+							<Select value={paymentMethodId} onValueChange={setPaymentMethodId}>
 								<SelectTrigger>
-									<SelectValue placeholder={t("selectPaymentMethod")} />
+									<SelectValue placeholder="Seleccionar método" />
 								</SelectTrigger>
 								<SelectContent>
 									{paymentMethods.map((method) => (
@@ -556,8 +604,8 @@ export default function TablesPage() {
 						</div>
 					</div>
 					<DialogFooter>
-						<Button variant="secondary" onClick={() => setCloseDialog(false)}>
-							{tc("cancel")}
+						<Button variant="outline" onClick={() => setCloseDialog(false)}>
+							Cancelar
 						</Button>
 						<Button
 							disabled={!paymentMethodId || closeMutation.isPending}
@@ -572,7 +620,7 @@ export default function TablesPage() {
 							{closeMutation.isPending && (
 								<Loader2Icon className="mr-2 h-4 w-4 animate-spin" />
 							)}
-							{t("chargeAndClose")}
+							Cobrar y cerrar
 						</Button>
 					</DialogFooter>
 				</DialogContent>

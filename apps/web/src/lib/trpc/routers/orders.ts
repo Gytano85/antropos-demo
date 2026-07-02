@@ -13,7 +13,6 @@ import {
 	consumeRecipeIngredients,
 	restoreOrderItemIngredients,
 } from "@/lib/inventory/ingredients";
-import { maybeTriggerRestock } from "@/lib/restock/trigger";
 import { protectedProcedure, router } from "../init";
 
 const orderWithCustomerSchema = z.object({
@@ -121,7 +120,7 @@ export const ordersRouter = router({
 		)
 		.output(orderWithCustomerSchema)
 		.mutation(async ({ ctx, input }) => {
-			const result = await db.transaction(async (tx) => {
+			return db.transaction(async (tx) => {
 				const [orderData] = await tx
 					.insert(orders)
 					.values({
@@ -218,13 +217,6 @@ export const ordersRouter = router({
 
 				return { ...orderData, customer: customer ?? null };
 			});
-
-			// Revisar reglas de reabasto fuera de la transacción: un fallo al
-			// contactar al proveedor nunca debe revertir la venta.
-			for (const product of input.products) {
-				await maybeTriggerRestock(ctx.user.id, product.id);
-			}
-			return result;
 		}),
 
 	update: protectedProcedure
@@ -246,8 +238,7 @@ export const ordersRouter = router({
 		.output(orderWithCustomerSchema)
 		.mutation(async ({ ctx, input }) => {
 			const { id, ...data } = input;
-			const reactivatedProductIds = new Set<number>();
-			const result = await db.transaction(async (tx) => {
+			return db.transaction(async (tx) => {
 				const current = await tx.query.orders.findFirst({
 					where: and(eq(orders.id, id), eq(orders.user_uid, ctx.user.id)),
 					with: { orderItems: true },
@@ -323,7 +314,6 @@ export const ordersRouter = router({
 								in_stock: sql`${products.in_stock} - ${item.quantity}`,
 							})
 							.where(eq(products.id, item.product_id));
-						reactivatedProductIds.add(item.product_id);
 					}
 				}
 
@@ -342,11 +332,6 @@ export const ordersRouter = router({
 
 				return { ...updated, customer: customer ?? null };
 			});
-
-			for (const productId of reactivatedProductIds) {
-				await maybeTriggerRestock(ctx.user.id, productId);
-			}
-			return result;
 		}),
 
 	delete: protectedProcedure

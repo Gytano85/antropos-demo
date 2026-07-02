@@ -33,6 +33,7 @@ import { SearchFilter, type FilterOption } from "@finopenpos/ui/components/searc
 import type { RouterOutputs } from "@/lib/trpc/router";
 import { useTranslations, useLocale } from "next-intl";
 import { formatCurrency } from "@/lib/utils";
+import { ProductImage } from "@/components/product-image";
 
 type Product = RouterOutputs["products"]["list"][number];
 
@@ -46,10 +47,10 @@ export default function Products() {
   const productFormSchema = z.object({
     name: z.string().min(1, t("nameRequired")),
     description: z.string(),
+    image_url: z.string(),
     price: z.number().min(0, t("priceMustBePositive")),
     in_stock: z.number().int().min(0, t("stockMustBeNonNegative")),
     category: z.string(),
-    image_url: z.string(),
     ncm: z.string(),
     cfop: z.string(),
     icms_cst: z.string(),
@@ -75,7 +76,23 @@ export default function Products() {
   ];
 
   const columns: Column<Product>[] = [
-    { key: "name", header: t("product"), sortable: true, className: "font-medium" },
+    {
+      key: "name",
+      header: t("product"),
+      sortable: true,
+      className: "font-medium",
+      render: (row) => (
+        <div className="flex items-center gap-3">
+          <ProductImage
+            src={row.image_url}
+            category={row.category}
+            alt={row.name}
+            className="h-12 w-12"
+          />
+          <span>{row.name}</span>
+        </div>
+      ),
+    },
     { key: "description", header: tc("description"), hideOnMobile: true },
     {
       key: "price",
@@ -130,7 +147,7 @@ export default function Products() {
   });
 
   const form = useForm({
-    defaultValues: { name: "", description: "", price: 0, in_stock: 0, category: "", image_url: "", ncm: "", cfop: "", icms_cst: "", pis_cst: "", cofins_cst: "", unit_of_measure: "" },
+    defaultValues: { name: "", description: "", image_url: "", price: 0, in_stock: 0, category: "", ncm: "", cfop: "", icms_cst: "", pis_cst: "", cofins_cst: "", unit_of_measure: "" },
     validators: {
       onSubmit: productFormSchema,
     },
@@ -138,10 +155,10 @@ export default function Products() {
       const payload = {
         name: value.name,
         description: value.description || undefined,
+        image_url: value.image_url || undefined,
         price: Math.round(value.price * 100),
         in_stock: value.in_stock,
         category: value.category || undefined,
-        image_url: value.image_url || undefined,
         ncm: value.ncm || undefined,
         cfop: value.cfop || undefined,
         icms_cst: value.icms_cst || undefined,
@@ -177,10 +194,10 @@ export default function Products() {
     form.reset();
     form.setFieldValue("name", p.name);
     form.setFieldValue("description", p.description ?? "");
+    form.setFieldValue("image_url", p.image_url ?? "");
     form.setFieldValue("price", p.price / 100);
     form.setFieldValue("in_stock", p.in_stock);
     form.setFieldValue("category", p.category ?? "");
-    form.setFieldValue("image_url", p.image_url ?? "");
     form.setFieldValue("ncm", p.ncm ?? "");
     form.setFieldValue("cfop", p.cfop ?? "");
     form.setFieldValue("icms_cst", p.icms_cst ?? "");
@@ -289,6 +306,20 @@ export default function Products() {
                   </div>
                 )}
               </form.Field>
+              <form.Field name="image_url">
+                {(field) => (
+                  <div className="flex flex-col sm:grid sm:grid-cols-4 sm:items-center gap-2 sm:gap-4">
+                    <Label htmlFor="image_url" className="sm:text-right">Imagen</Label>
+                    <Input
+                      id="image_url"
+                      value={field.state.value}
+                      onChange={(e) => field.handleChange(e.target.value)}
+                      className="col-span-3"
+                      placeholder="https://..."
+                    />
+                  </div>
+                )}
+              </form.Field>
               <form.Field name="price">
                 {(field) => (
                   <div className="flex flex-col sm:grid sm:grid-cols-4 sm:items-center gap-2 sm:gap-4">
@@ -339,31 +370,6 @@ export default function Products() {
                         <SelectItem value="servicios">{t("services")}</SelectItem>
                       </SelectContent>
                     </Select>
-                  </div>
-                )}
-              </form.Field>
-              <form.Field name="image_url">
-                {(field) => (
-                  <div className="flex flex-col sm:grid sm:grid-cols-4 sm:items-center gap-2 sm:gap-4">
-                    <Label htmlFor="image_url" className="sm:text-right">{t("imageUrl")}</Label>
-                    <div className="col-span-3 flex items-center gap-3">
-                      <Input
-                        id="image_url"
-                        value={field.state.value}
-                        onChange={(e) => field.handleChange(e.target.value)}
-                        placeholder="https://..."
-                        className="flex-1"
-                      />
-                      {field.state.value ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img
-                          src={field.state.value}
-                          alt=""
-                          className="h-10 w-10 rounded object-cover border"
-                          onError={(e) => { e.currentTarget.style.visibility = "hidden"; }}
-                        />
-                      ) : null}
-                    </div>
                   </div>
                 )}
               </form.Field>

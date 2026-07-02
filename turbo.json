@@ -5,8 +5,7 @@
     "build": {
       "dependsOn": ["^build"],
       "inputs": ["$TURBO_DEFAULT$", ".env*"],
-      "outputs": ["dist/**", ".next/**"],
-      "env": ["DATABASE_URL", "BETTER_AUTH_SECRET", "BASE_URL"]
+      "outputs": ["dist/**", ".next/**"]
     },
     "lint": {
       "dependsOn": ["^lint"]
@@ -19,8 +18,7 @@
       "persistent": true
     },
     "db:push": {
-      "cache": false,
-      "env": ["DATABASE_URL"]
+      "cache": false
     },
     "db:generate": {
       "cache": false

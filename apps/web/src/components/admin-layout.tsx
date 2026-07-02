@@ -2,14 +2,6 @@
 
 import { Button } from "@finopenpos/ui/components/button";
 import {
-	DropdownMenu,
-	DropdownMenuContent,
-	DropdownMenuItem,
-	DropdownMenuLabel,
-	DropdownMenuSeparator,
-	DropdownMenuTrigger,
-} from "@finopenpos/ui/components/dropdown-menu";
-import {
 	Tooltip,
 	TooltipContent,
 	TooltipProvider,
@@ -17,6 +9,7 @@ import {
 } from "@finopenpos/ui/components/tooltip";
 import {
 	BookOpenIcon,
+	BrainCircuitIcon,
 	CreditCardIcon,
 	DollarSignIcon,
 	LayoutDashboardIcon,
@@ -27,22 +20,16 @@ import {
 	ReceiptTextIcon,
 	SettingsIcon,
 	ShoppingBagIcon,
-	ShoppingCartIcon,
-	TrendingUpIcon,
 	UsersIcon,
 	UtensilsIcon,
-	WarehouseIcon,
 	XIcon,
 } from "lucide-react";
-import { useQuery } from "@tanstack/react-query";
-import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useQuery } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { useState } from "react";
-import { logout } from "@/app/login/actions";
 import { LocaleSwitcher } from "@/components/locale-switcher";
-import { hexToHslString, isHexDark } from "@/lib/branding/color";
 import { useTRPC } from "@/lib/trpc/client";
 
 interface NavItem {
@@ -50,18 +37,16 @@ interface NavItem {
 	labelKey:
 		| "dashboard"
 		| "cashier"
-		| "products"
 		| "inventory"
 		| "customers"
 		| "orders"
 		| "paymentMethods"
-		| "pos"
 		| "invoices"
 		| "fiscalSettings"
+		| "settings"
 		| "tables"
-		| "digitalMenu"
-		| "dynamicPricing"
-		| "settings";
+		| "menuEngine"
+		| "digitalMenu";
 	icon: LucideIcon;
 }
 
@@ -69,9 +54,9 @@ const navItems: NavItem[] = [
 	{ href: "/admin", labelKey: "dashboard", icon: LayoutDashboardIcon },
 	{ href: "/admin/tables", labelKey: "tables", icon: UtensilsIcon },
 	{ href: "/menu", labelKey: "digitalMenu", icon: BookOpenIcon },
+	{ href: "/admin/menu-engine", labelKey: "menuEngine", icon: BrainCircuitIcon },
 	{ href: "/admin/cashier", labelKey: "cashier", icon: DollarSignIcon },
-	{ href: "/admin/products", labelKey: "products", icon: PackageIcon },
-	{ href: "/admin/inventory", labelKey: "inventory", icon: WarehouseIcon },
+	{ href: "/admin/inventory", labelKey: "inventory", icon: PackageIcon },
 	{ href: "/admin/customers", labelKey: "customers", icon: UsersIcon },
 	{ href: "/admin/orders", labelKey: "orders", icon: ShoppingBagIcon },
 	{
@@ -79,46 +64,20 @@ const navItems: NavItem[] = [
 		labelKey: "paymentMethods",
 		icon: CreditCardIcon,
 	},
-	{ href: "/admin/pos", labelKey: "pos", icon: ShoppingCartIcon },
-	{ href: "/admin/pricing", labelKey: "dynamicPricing", icon: TrendingUpIcon },
 	{ href: "/admin/fiscal", labelKey: "invoices", icon: ReceiptTextIcon },
-	{
-		href: "/admin/fiscal/settings",
-		labelKey: "fiscalSettings",
-		icon: SettingsIcon,
-	},
 	{ href: "/admin/settings", labelKey: "settings", icon: SettingsIcon },
 ];
 
 export function AdminLayout({ children }: { children: React.ReactNode }) {
+	const trpc = useTRPC();
 	const pathname = usePathname();
 	const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 	const [sidebarExpanded, setSidebarExpanded] = useState(false);
 	const t = useTranslations("nav");
-	const trpc = useTRPC();
-	const { data: branding } = useQuery(trpc.branding.getSettings.queryOptions());
-
-	const companyName = branding?.companyName || "FinOpenPOS";
-	const brandStyle: React.CSSProperties = {};
-	if (branding?.primaryColor) {
-		const hsl = hexToHslString(branding.primaryColor);
-		if (hsl) {
-			brandStyle["--primary" as keyof React.CSSProperties] = hsl;
-			brandStyle["--ring" as keyof React.CSSProperties] = hsl;
-			brandStyle["--primary-foreground" as keyof React.CSSProperties] =
-				isHexDark(branding.primaryColor) ? "0 0% 100%" : "222.2 47.4% 11.2%";
-		}
-	}
-
-	const pageNames: Record<string, string> = Object.fromEntries(
-		navItems.map((item) => [item.href, t(item.labelKey)]),
-	);
+	const { data: appSettings } = useQuery(trpc.appSettings.get.queryOptions());
 
 	return (
-		<div
-			className="flex min-h-screen w-full flex-col bg-muted/40"
-			style={brandStyle}
-		>
+		<div className="flex min-h-screen w-full flex-col bg-muted/40">
 			<header className="sticky top-0 z-30 flex h-14 items-center gap-2 border-b bg-background px-3 sm:gap-4 sm:px-4">
 				<Button
 					variant="ghost"
@@ -142,45 +101,12 @@ export function AdminLayout({ children }: { children: React.ReactNode }) {
 						{t(sidebarExpanded ? "closeMenu" : "openMenu")}
 					</span>
 				</Button>
-				<Link
-					href="/admin"
-					className="hidden items-center gap-2 font-semibold text-lg sm:flex"
-				>
-					<Package2Icon className="h-6 w-6 text-primary" />
-					<span className="truncate">{companyName}</span>
-					<span className="sr-only">{t("adminPanel")}</span>
+				<Link href="/admin" className="items-center gap-2 font-semibold text-lg flex">
+					<Package2Icon className="h-6 w-6" />
+					<span>{appSettings?.company_title ?? "Antro POS"}</span>
 				</Link>
-				<h1 className="truncate font-bold text-lg sm:text-xl">
-					{pageNames[pathname]}
-				</h1>
 				<div className="ml-auto flex items-center gap-2">
 					<LocaleSwitcher />
-					<DropdownMenu>
-						<DropdownMenuTrigger asChild>
-							<Button
-								variant="outline"
-								size="icon"
-								className="shrink-0 overflow-hidden rounded-full"
-							>
-								<Image
-									src={`${process.env.NEXT_PUBLIC_BASE_PATH || ""}/placeholder-user.jpg`}
-									width={36}
-									height={36}
-									alt="Avatar"
-									className="overflow-hidden rounded-full"
-								/>
-							</Button>
-						</DropdownMenuTrigger>
-						<DropdownMenuContent align="end">
-							<DropdownMenuLabel>{t("myAccount")}</DropdownMenuLabel>
-							<DropdownMenuSeparator />
-							<DropdownMenuItem>{t("support")}</DropdownMenuItem>
-							<DropdownMenuSeparator />
-							<DropdownMenuItem onClick={() => logout()}>
-								{t("logout")}
-							</DropdownMenuItem>
-						</DropdownMenuContent>
-					</DropdownMenu>
 				</div>
 			</header>
 
@@ -200,8 +126,8 @@ export function AdminLayout({ children }: { children: React.ReactNode }) {
 								className="flex items-center gap-2 font-semibold text-lg"
 								onClick={() => setMobileMenuOpen(false)}
 							>
-								<Package2Icon className="h-6 w-6 text-primary" />
-								<span className="truncate">{companyName}</span>
+								<Package2Icon className="h-6 w-6" />
+								<span>{appSettings?.company_title ?? "Antro POS"}</span>
 							</Link>
 							<Button
 								variant="ghost"
@@ -217,7 +143,7 @@ export function AdminLayout({ children }: { children: React.ReactNode }) {
 								href={href}
 								onClick={() => setMobileMenuOpen(false)}
 								className={`flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors ${
-									pathname === href
+										pathname === href || pathname.startsWith(`${href}/`)
 										? "bg-accent font-medium text-accent-foreground"
 										: "text-muted-foreground hover:bg-muted hover:text-foreground"
 								}`}
@@ -257,7 +183,7 @@ export function AdminLayout({ children }: { children: React.ReactNode }) {
 													? "w-full justify-start gap-3 px-3"
 													: "w-9 justify-center"
 											} ${
-												pathname === href
+												pathname === href || pathname.startsWith(`${href}/`)
 													? "bg-accent text-accent-foreground"
 													: "text-muted-foreground"
 											} hover:bg-muted hover:text-foreground`}

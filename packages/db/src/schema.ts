@@ -34,11 +34,11 @@ export const products = pgTable("products", {
 	id: serial("id").primaryKey(),
 	name: varchar("name", { length: 255 }).notNull(),
 	description: text("description"),
+	image_url: text("image_url"),
 	price: integer("price").notNull(),
 	in_stock: integer("in_stock").notNull(),
 	user_uid: varchar("user_uid", { length: 255 }).notNull(),
 	category: varchar("category", { length: 50 }),
-	image_url: varchar("image_url", { length: 500 }),
 	// Fiscal fields (optional, fallback to fiscal_settings defaults)
 	ncm: varchar("ncm", { length: 8 }),
 	cfop: varchar("cfop", { length: 4 }),
@@ -47,6 +47,44 @@ export const products = pgTable("products", {
 	cofins_cst: varchar("cofins_cst", { length: 2 }),
 	unit_of_measure: varchar("unit_of_measure", { length: 6 }).default("UN"),
 	created_at: timestamp("created_at").defaultNow(),
+});
+
+export const appSettings = pgTable("app_settings", {
+	id: serial("id").primaryKey(),
+	user_uid: varchar("user_uid", { length: 255 }).notNull().unique(),
+	company_title: varchar("company_title", { length: 120 })
+		.notNull()
+		.default("Antro POS"),
+	primary_color: varchar("primary_color", { length: 20 })
+		.notNull()
+		.default("#111827"),
+	accent_color: varchar("accent_color", { length: 20 })
+		.notNull()
+		.default("#f59e0b"),
+	background_color: varchar("background_color", { length: 20 })
+		.notNull()
+		.default("#ffffff"),
+	card_color: varchar("card_color", { length: 20 })
+		.notNull()
+		.default("#ffffff"),
+	text_color: varchar("text_color", { length: 20 })
+		.notNull()
+		.default("#111827"),
+	created_at: timestamp("created_at").defaultNow(),
+	updated_at: timestamp("updated_at").defaultNow(),
+});
+
+export const restockingSettings = pgTable("restocking_settings", {
+	id: serial("id").primaryKey(),
+	user_uid: varchar("user_uid", { length: 255 }).notNull().unique(),
+	history_days: integer("history_days").notNull().default(30),
+	lead_time_days: integer("lead_time_days").notNull().default(7),
+	coverage_days: integer("coverage_days").notNull().default(14),
+	safety_stock_pct: integer("safety_stock_pct").notNull().default(25),
+	urgent_days: integer("urgent_days").notNull().default(3),
+	soon_days: integer("soon_days").notNull().default(7),
+	created_at: timestamp("created_at").defaultNow(),
+	updated_at: timestamp("updated_at").defaultNow(),
 });
 
 // ── Customers ───────────────────────────────────────────────────────────────
@@ -92,6 +130,8 @@ export const ingredients = pgTable("ingredients", {
 	stock_quantity: real("stock_quantity").notNull().default(0),
 	package_size: real("package_size").notNull().default(1),
 	low_stock_threshold: real("low_stock_threshold").notNull().default(0),
+	shelf_life_days: real("shelf_life_days"),
+	opened_days: real("opened_days"),
 	user_uid: varchar("user_uid", { length: 255 }).notNull(),
 	created_at: timestamp("created_at").defaultNow(),
 	updated_at: timestamp("updated_at").defaultNow(),
@@ -219,73 +259,6 @@ export const fiscalSettings = pgTable("fiscal_settings", {
 	default_cofins_cst: varchar("default_cofins_cst", { length: 2 }).default(
 		"99",
 	),
-	created_at: timestamp("created_at").defaultNow(),
-	updated_at: timestamp("updated_at").defaultNow(),
-});
-
-// ── Suppliers ───────────────────────────────────────────────────────────────
-export const suppliers = pgTable("suppliers", {
-	id: serial("id").primaryKey(),
-	user_uid: varchar("user_uid", { length: 255 }).notNull(),
-	name: varchar("name", { length: 255 }).notNull(),
-	contact_name: varchar("contact_name", { length: 255 }),
-	email: varchar("email", { length: 255 }),
-	// Formato E.164 (+5511999999999) para poder enviar SMS por Twilio.
-	phone: varchar("phone", { length: 20 }),
-	notes: text("notes"),
-	created_at: timestamp("created_at").defaultNow(),
-	updated_at: timestamp("updated_at").defaultNow(),
-});
-
-// ── Restock rules ───────────────────────────────────────────────────────────
-// Regla configurable por producto: cuando in_stock <= threshold_quantity,
-// se dispara un contacto automático (email y/o SMS) al proveedor asignado.
-export const restockRules = pgTable("restock_rules", {
-	id: serial("id").primaryKey(),
-	user_uid: varchar("user_uid", { length: 255 }).notNull(),
-	product_id: integer("product_id")
-		.references(() => products.id)
-		.notNull(),
-	supplier_id: integer("supplier_id").references(() => suppliers.id),
-	threshold_quantity: integer("threshold_quantity").notNull().default(5),
-	reorder_quantity: integer("reorder_quantity").notNull().default(20),
-	auto_contact_email: boolean("auto_contact_email").notNull().default(true),
-	auto_contact_sms: boolean("auto_contact_sms").notNull().default(false),
-	is_active: boolean("is_active").notNull().default(true),
-	// Horas mínimas entre avisos para no espamear al proveedor.
-	cooldown_hours: integer("cooldown_hours").notNull().default(24),
-	last_triggered_at: timestamp("last_triggered_at"),
-	created_at: timestamp("created_at").defaultNow(),
-	updated_at: timestamp("updated_at").defaultNow(),
-});
-
-// ── Restock alerts (bitácora de contactos al proveedor) ────────────────────
-export const restockAlerts = pgTable("restock_alerts", {
-	id: serial("id").primaryKey(),
-	user_uid: varchar("user_uid", { length: 255 }).notNull(),
-	rule_id: integer("rule_id").references(() => restockRules.id),
-	product_id: integer("product_id").references(() => products.id),
-	supplier_id: integer("supplier_id").references(() => suppliers.id),
-	stock_at_trigger: integer("stock_at_trigger").notNull(),
-	requested_quantity: integer("requested_quantity").notNull(),
-	channel: varchar("channel", { length: 10 }).notNull(), // email | sms | both
-	email_status: varchar("email_status", { length: 20 }), // sent | failed | skipped
-	sms_status: varchar("sms_status", { length: 20 }), // sent | failed | skipped
-	error_message: text("error_message"),
-	created_at: timestamp("created_at").defaultNow(),
-});
-
-// ── Branding settings (personalización visual del demo) ───────────────────
-export const brandingSettings = pgTable("branding_settings", {
-	id: serial("id").primaryKey(),
-	user_uid: varchar("user_uid", { length: 255 }).notNull().unique(),
-	company_name: varchar("company_name", { length: 100 })
-		.notNull()
-		.default("FinOpenPOS"),
-	// Color primario en hex (#rrggbb), se traduce a variables CSS en runtime.
-	primary_color: varchar("primary_color", { length: 7 })
-		.notNull()
-		.default("#0f172a"),
 	created_at: timestamp("created_at").defaultNow(),
 	updated_at: timestamp("updated_at").defaultNow(),
 });
@@ -427,42 +400,6 @@ export const customersRelations = relations(customers, ({ many }) => ({
 export const productsRelations = relations(products, ({ many }) => ({
 	orderItems: many(orderItems),
 	recipes: many(recipes),
-	restockRules: many(restockRules),
-}));
-
-export const suppliersRelations = relations(suppliers, ({ many }) => ({
-	restockRules: many(restockRules),
-	restockAlerts: many(restockAlerts),
-}));
-
-export const restockRulesRelations = relations(
-	restockRules,
-	({ one, many }) => ({
-		product: one(products, {
-			fields: [restockRules.product_id],
-			references: [products.id],
-		}),
-		supplier: one(suppliers, {
-			fields: [restockRules.supplier_id],
-			references: [suppliers.id],
-		}),
-		alerts: many(restockAlerts),
-	}),
-);
-
-export const restockAlertsRelations = relations(restockAlerts, ({ one }) => ({
-	rule: one(restockRules, {
-		fields: [restockAlerts.rule_id],
-		references: [restockRules.id],
-	}),
-	product: one(products, {
-		fields: [restockAlerts.product_id],
-		references: [products.id],
-	}),
-	supplier: one(suppliers, {
-		fields: [restockAlerts.supplier_id],
-		references: [suppliers.id],
-	}),
 }));
 
 export const ingredientsRelations = relations(ingredients, ({ many }) => ({

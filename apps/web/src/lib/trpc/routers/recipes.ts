@@ -56,6 +56,144 @@ export const recipesRouter = router({
 		};
 	}),
 
+	auditSummary: protectedProcedure.query(async ({ ctx }) => {
+		const [ingredientRows, recipeRows, soldRows, countRows] = await Promise.all([
+			db
+				.select()
+				.from(ingredients)
+				.where(eq(ingredients.user_uid, ctx.user.id))
+				.orderBy(ingredients.name),
+			db.query.recipes.findMany({
+				where: eq(recipes.user_uid, ctx.user.id),
+				with: {
+					product: {
+						columns: { id: true, name: true, category: true },
+					},
+					items: {
+						with: {
+							ingredient: true,
+						},
+					},
+				},
+			}),
+			db
+				.select({
+					productId: orderItems.product_id,
+					productName: products.name,
+					quantity: orderItems.quantity,
+					status: orders.status,
+				})
+				.from(orderItems)
+				.innerJoin(orders, eq(orderItems.order_id, orders.id))
+				.leftJoin(products, eq(orderItems.product_id, products.id))
+				.where(eq(orders.user_uid, ctx.user.id)),
+			db.query.ingredientCounts.findMany({
+				where: eq(ingredientCounts.user_uid, ctx.user.id),
+				with: { ingredient: true },
+				orderBy: [desc(ingredientCounts.created_at)],
+				limit: 300,
+			}),
+		]);
+
+		const recipesByProduct = new Map(
+			recipeRows.map((recipe) => [recipe.product_id, recipe]),
+		);
+		const soldByProduct = new Map<number, { name: string; quantity: number }>();
+		const expectedByIngredient = new Map<number, number>();
+		const recipeMissing = new Map<number, { name: string; quantity: number }>();
+
+		for (const sold of soldRows) {
+			if (
+				!sold.productId ||
+				!["pending", "completed"].includes(sold.status ?? "")
+			) {
+				continue;
+			}
+			const previousSold = soldByProduct.get(sold.productId);
+			soldByProduct.set(sold.productId, {
+				name: sold.productName ?? `Producto #${sold.productId}`,
+				quantity: (previousSold?.quantity ?? 0) + sold.quantity,
+			});
+
+			const recipe = recipesByProduct.get(sold.productId);
+			if (!recipe) {
+				const previousMissing = recipeMissing.get(sold.productId);
+				recipeMissing.set(sold.productId, {
+					name: sold.productName ?? `Producto #${sold.productId}`,
+					quantity: (previousMissing?.quantity ?? 0) + sold.quantity,
+				});
+				continue;
+			}
+
+			for (const item of recipe.items) {
+				expectedByIngredient.set(
+					item.ingredient_id,
+					(expectedByIngredient.get(item.ingredient_id) ?? 0) +
+						item.quantity * sold.quantity,
+				);
+			}
+		}
+
+		const latestCountByIngredient = new Map<
+			number,
+			(typeof countRows)[number]
+		>();
+		for (const count of countRows) {
+			if (!latestCountByIngredient.has(count.ingredient_id)) {
+				latestCountByIngredient.set(count.ingredient_id, count);
+			}
+		}
+
+		const rows = ingredientRows.map((ingredient) => {
+			const expectedConsumed = expectedByIngredient.get(ingredient.id) ?? 0;
+			const latestCount = latestCountByIngredient.get(ingredient.id);
+			const expectedStock =
+				latestCount?.expected_quantity ?? ingredient.stock_quantity;
+			const realStock = latestCount?.counted_quantity ?? ingredient.stock_quantity;
+			const difference = realStock - expectedStock;
+			const denominator = Math.max(Math.abs(expectedStock), ingredient.package_size * 0.01, 0.0001);
+			const differencePercent = (difference / denominator) * 100;
+			const withinTolerance = Math.abs(differencePercent) <= TOLERANCE_PERCENT;
+			const status = withinTolerance
+				? "Dentro de rango"
+				: latestCount
+					? "Fuera de rango"
+					: "Conteo pendiente";
+
+			return {
+				ingredientId: ingredient.id,
+				name: ingredient.name,
+				unit: ingredient.unit,
+				expectedConsumed,
+				expectedStock,
+				realStock,
+				qualityAdjustment: 0,
+				finalDifference: difference,
+				differencePercent,
+				tolerancePercent: TOLERANCE_PERCENT,
+				packageSize: ingredient.package_size,
+				status,
+				lowStock: ingredient.stock_quantity <= ingredient.low_stock_threshold,
+				stockQuantity: ingredient.stock_quantity,
+				lowStockThreshold: ingredient.low_stock_threshold,
+			};
+		}).sort((a, b) => {
+			const priority = { "Fuera de rango": 0, "Conteo pendiente": 1, "Dentro de rango": 2 };
+			return (
+				priority[a.status] - priority[b.status] ||
+				Math.abs(b.differencePercent) - Math.abs(a.differencePercent) ||
+				a.name.localeCompare(b.name)
+			);
+		});
+
+		return {
+			tolerancePercent: TOLERANCE_PERCENT,
+			rows,
+			recipeMissing: [...recipeMissing.values()],
+			soldProducts: [...soldByProduct.values()],
+		};
+	}),
+
 	createIngredient: protectedProcedure
 		.input(
 			z.object({
@@ -89,6 +227,8 @@ export const recipesRouter = router({
 				unit: z.enum(["ml", "g", "unit"]),
 				packageSize: z.number().positive(),
 				lowStockThreshold: z.number().min(0),
+				shelfLifeDays: z.number().positive().optional(),
+				openedDays: z.number().min(0).optional(),
 			}),
 		)
 		.mutation(async ({ ctx, input }) => {
@@ -99,6 +239,8 @@ export const recipesRouter = router({
 					unit: input.unit,
 					package_size: input.packageSize,
 					low_stock_threshold: input.lowStockThreshold,
+					shelf_life_days: input.shelfLifeDays,
+					opened_days: input.openedDays,
 					updated_at: new Date(),
 				})
 				.where(

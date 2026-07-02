@@ -1,174 +1,61 @@
 "use client";
 
-import { Button } from "@finopenpos/ui/components/button";
-import { Input } from "@finopenpos/ui/components/input";
 import {
 	BeerIcon,
 	GlassWaterIcon,
 	MartiniIcon,
-	MinusIcon,
-	PlusIcon,
-	SearchIcon,
+	MoonIcon,
+	SparklesIcon,
+	SunIcon,
 	UtensilsCrossedIcon,
 	WineIcon,
-	XIcon,
 	type LucideIcon,
 } from "lucide-react";
-import { Playfair_Display } from "next/font/google";
 import { useMemo, useState } from "react";
-import { toast } from "sonner";
+import { productPhotoUrl } from "@/lib/product-photos";
 
-const display = Playfair_Display({
-	subsets: ["latin"],
-	weight: ["500", "600", "700"],
-});
+const displayClass = "font-serif";
 
-type Category = "cocteles" | "cervezas" | "botellas" | "snacks" | "sin-alcohol";
+type Theme = "dark" | "light";
+type Category =
+	| "promos"
+	| "botellas"
+	| "cocteles"
+	| "cervezas"
+	| "alimentos"
+	| "sin-alcohol";
 
 type MenuItem = {
 	id: number;
 	name: string;
 	description: string;
 	price: number;
+	cost: number;
 	category: Category;
-	popular?: boolean;
+	image: string;
+	inventory: number;
+	minInventory: number;
+	demand: number;
+	wasteRisk: number;
+	expiresInDays?: number;
+	manualBoost?: number;
+	promotable?: boolean;
+	pairsWith?: string[];
 };
 
-const sections: { id: Category; label: string; note?: string }[] = [
-	{ id: "cocteles", label: "Coctelería", note: "De autor y clásicos" },
-	{ id: "cervezas", label: "Cervezas" },
-	{ id: "botellas", label: "Botellas", note: "Servicio con mezcladores" },
-	{ id: "snacks", label: "Para picar" },
-	{ id: "sin-alcohol", label: "Sin alcohol" },
-];
-
-const categoryIcons: Record<Category, LucideIcon> = {
-	cocteles: MartiniIcon,
-	cervezas: BeerIcon,
-	botellas: WineIcon,
-	snacks: UtensilsCrossedIcon,
-	"sin-alcohol": GlassWaterIcon,
+type RankedItem = MenuItem & {
+	score: number;
+	customerTag: string;
+	layout: "hero" | "feature" | "compact";
 };
 
-const menuItems: MenuItem[] = [
-	{
-		id: 1,
-		name: "Mojito",
-		description: "Ron blanco, hierbabuena, limón fresco y agua mineral.",
-		price: 160,
-		category: "cocteles",
-		popular: true,
-	},
-	{
-		id: 2,
-		name: "Margarita",
-		description: "Tequila, licor de naranja, limón y escarchado de sal.",
-		price: 170,
-		category: "cocteles",
-		popular: true,
-	},
-	{
-		id: 3,
-		name: "Carajillo",
-		description: "Licor 43 y espresso recién preparado.",
-		price: 190,
-		category: "cocteles",
-	},
-	{
-		id: 4,
-		name: "Gin Tonic",
-		description: "Ginebra premium, agua tónica y cítricos.",
-		price: 190,
-		category: "cocteles",
-	},
-	{
-		id: 5,
-		name: "Corona Extra",
-		description: "Botella de 355 ml, servida bien fría.",
-		price: 85,
-		category: "cervezas",
-		popular: true,
-	},
-	{
-		id: 6,
-		name: "Modelo Especial",
-		description: "Cerveza tipo pilsner, botella de 355 ml.",
-		price: 90,
-		category: "cervezas",
-	},
-	{
-		id: 7,
-		name: "Heineken",
-		description: "Cerveza lager, botella de 355 ml.",
-		price: 100,
-		category: "cervezas",
-	},
-	{
-		id: 8,
-		name: "Don Julio 70",
-		description: "Botella de 700 ml con hielo, cítricos y seis mezcladores.",
-		price: 3200,
-		category: "botellas",
-		popular: true,
-	},
-	{
-		id: 9,
-		name: "Buchanan's 12",
-		description: "Botella de 750 ml con hielo, agua mineral y refrescos.",
-		price: 2800,
-		category: "botellas",
-	},
-	{
-		id: 10,
-		name: "Grey Goose",
-		description: "Vodka de 750 ml con servicio completo de mezcladores.",
-		price: 2700,
-		category: "botellas",
-	},
-	{
-		id: 11,
-		name: "Alitas BBQ",
-		description: "Diez alitas con salsa BBQ, apio y aderezo ranch.",
-		price: 190,
-		category: "snacks",
-		popular: true,
-	},
-	{
-		id: 12,
-		name: "Nachos con Queso",
-		description: "Totopos, queso, jalapeños y pico de gallo.",
-		price: 140,
-		category: "snacks",
-	},
-	{
-		id: 13,
-		name: "Mini Hamburguesas",
-		description: "Tres mini hamburguesas acompañadas con papas.",
-		price: 210,
-		category: "snacks",
-	},
-	{
-		id: 14,
-		name: "Agua Mineral",
-		description: "Botella de 355 ml.",
-		price: 60,
-		category: "sin-alcohol",
-	},
-	{
-		id: 15,
-		name: "Red Bull",
-		description: "Bebida energética de 250 ml.",
-		price: 90,
-		category: "sin-alcohol",
-	},
-	{
-		id: 16,
-		name: "Limonada Mineral",
-		description: "Limón natural, jarabe de la casa y agua mineral.",
-		price: 85,
-		category: "sin-alcohol",
-	},
-];
+type MenuSection = {
+	id: Category;
+	group: string;
+	label: string;
+	note: string;
+	icon: LucideIcon;
+};
 
 const money = new Intl.NumberFormat("es-MX", {
 	style: "currency",
@@ -176,327 +63,523 @@ const money = new Intl.NumberFormat("es-MX", {
 	maximumFractionDigits: 0,
 });
 
-export default function DigitalMenuPage() {
-	const [search, setSearch] = useState("");
-	const [cartOpen, setCartOpen] = useState(false);
-	const [table, setTable] = useState("");
-	const [cart, setCart] = useState<Record<number, number>>({});
+const themeStyles = {
+	dark: {
+		page: "bg-[#050505] text-white",
+		hero: "bg-[radial-gradient(circle_at_20%_10%,rgba(255,255,255,0.10),transparent_26%),linear-gradient(135deg,#111_0%,#050505_55%,#171717_100%)]",
+		card: "border-white/10 bg-[#111] shadow-black/30",
+		cardSoft: "border-white/10 bg-white/[0.045]",
+		border: "border-white/10",
+		title: "text-white",
+		muted: "text-white/62",
+		soft: "text-white/42",
+		imagePanel: "bg-gradient-to-br from-[#202020] via-[#111] to-black",
+		imagePanelLight: "bg-white",
+		accent: "text-[#d6b15f]",
+	badge: "bg-[#d6b15f] text-black",
+	subtleBadge: "bg-white/10 text-white",
+	},
+	light: {
+		page: "bg-[#f6f5f2] text-[#111]",
+		hero: "bg-[radial-gradient(circle_at_20%_10%,rgba(0,0,0,0.07),transparent_26%),linear-gradient(135deg,#fff_0%,#f6f5f2_55%,#e9e6df_100%)]",
+		card: "border-black/10 bg-white shadow-black/5",
+		cardSoft: "border-black/10 bg-white/75",
+		border: "border-black/10",
+		title: "text-[#111]",
+		muted: "text-black/62",
+		soft: "text-black/42",
+		imagePanel: "bg-gradient-to-br from-white via-[#f1f1ef] to-[#dedbd4]",
+		imagePanelLight: "bg-white",
+		accent: "text-[#8a651f]",
+	badge: "bg-[#111] text-white",
+	subtleBadge: "bg-black/6 text-black",
+	},
+} as const;
 
-	const groups = useMemo(() => {
-		const query = search.trim().toLowerCase();
-		return sections
-			.map((section) => ({
-				...section,
-				items: menuItems.filter(
-					(item) =>
-						item.category === section.id &&
-						(!query ||
-							item.name.toLowerCase().includes(query) ||
-							item.description.toLowerCase().includes(query)),
-				),
-			}))
-			.filter((section) => section.items.length > 0);
-	}, [search]);
+const sections: MenuSection[] = [
+	{
+		id: "promos",
+		group: "especiales",
+		label: "Especiales de la noche",
+		note: "Combos y experiencias para compartir en mesa.",
+		icon: SparklesIcon,
+	},
+	{
+		id: "botellas",
+		group: "bebidas",
+		label: "Botellas VIP",
+		note: "Servicio con hielo, cítricos y mezcladores.",
+		icon: WineIcon,
+	},
+	{
+		id: "cocteles",
+		group: "bebidas",
+		label: "Coctelería",
+		note: "Clásicos, tragos frescos y bebidas de noche.",
+		icon: MartiniIcon,
+	},
+	{
+		id: "cervezas",
+		group: "bebidas",
+		label: "Cervezas y cubetas",
+		note: "Botellas individuales y paquetes para mesa.",
+		icon: BeerIcon,
+	},
+	{
+		id: "alimentos",
+		group: "comida",
+		label: "Alimentos para compartir",
+		note: "Botanas, platos fuertes y antojos de madrugada.",
+		icon: UtensilsCrossedIcon,
+	},
+	{
+		id: "sin-alcohol",
+		group: "bebidas",
+		label: "Sin alcohol y mezcladores",
+		note: "Aguas, refrescos, energéticas y mocktails.",
+		icon: GlassWaterIcon,
+	},
+];
 
-	const cartItems = menuItems
-		.filter((item) => cart[item.id])
-		.map((item) => ({ ...item, quantity: cart[item.id] }));
-	const itemCount = cartItems.reduce((sum, item) => sum + item.quantity, 0);
-	const total = cartItems.reduce(
-		(sum, item) => sum + item.price * item.quantity,
+const photo = (name: string, category: Category) => productPhotoUrl(name, category);
+
+const items: MenuItem[] = [
+	{ id: 1, name: "Combo Cumpleañero", description: "Vodka premium, mezcladores, bengala, mesa decorada y accesos.", price: 3990, cost: 1680, category: "promos", image: photo("Combo Cumpleañero", "promos"), inventory: 18, minInventory: 4, demand: 78, wasteRisk: 18, manualBoost: 8, promotable: true, pairsWith: ["Red Bull", "Nachos Supreme"] },
+	{ id: 2, name: "Pack Precopeo", description: "Cubeta de 10 cervezas, nachos y papas para compartir.", price: 990, cost: 420, category: "promos", image: photo("Pack Precopeo", "promos"), inventory: 42, minInventory: 12, demand: 64, wasteRisk: 42, manualBoost: 12, promotable: true, pairsWith: ["Papas Gajo con Queso"] },
+	{ id: 3, name: "Mesa VIP Black", description: "Don Julio 70, Buchanan's 12 y mezcladores de servicio.", price: 5790, cost: 2850, category: "promos", image: photo("Mesa VIP Black", "promos"), inventory: 8, minInventory: 2, demand: 71, wasteRisk: 10, manualBoost: 6, promotable: true },
+	{ id: 4, name: "Don Julio 70", description: "Botella 700 ml con hielo, cítricos, sal y seis mezcladores.", price: 3200, cost: 1450, category: "botellas", image: photo("Don Julio 70", "botellas"), inventory: 7, minInventory: 3, demand: 82, wasteRisk: 6, manualBoost: 3 },
+	{ id: 5, name: "Buchanan's 12", description: "Botella 750 ml con agua mineral, refrescos y servicio VIP.", price: 2800, cost: 1280, category: "botellas", image: photo("Buchanan's 12", "botellas"), inventory: 11, minInventory: 4, demand: 68, wasteRisk: 8 },
+	{ id: 6, name: "Grey Goose", description: "Vodka premium 750 ml con mezcladores y fruta de temporada.", price: 2700, cost: 1220, category: "botellas", image: photo("Grey Goose", "botellas"), inventory: 15, minInventory: 3, demand: 48, wasteRisk: 24, promotable: true },
+	{ id: 7, name: "Moët Brut", description: "Champagne frío para celebración, con bengala de cortesía.", price: 3900, cost: 2100, category: "botellas", image: photo("Moët Brut", "botellas"), inventory: 5, minInventory: 2, demand: 41, wasteRisk: 5 },
+	{ id: 8, name: "Azulito", description: "Vodka, energética azul, limón y escarchado.", price: 180, cost: 54, category: "cocteles", image: photo("Azulito", "cocteles"), inventory: 76, minInventory: 20, demand: 86, wasteRisk: 36, manualBoost: 9, promotable: true, pairsWith: ["Papas Gajo con Queso"] },
+	{ id: 9, name: "Margarita", description: "Tequila, licor de naranja, limón fresco y sal.", price: 170, cost: 58, category: "cocteles", image: photo("Margarita", "cocteles"), inventory: 38, minInventory: 14, demand: 72, wasteRisk: 22, promotable: true },
+	{ id: 10, name: "Carajillo", description: "Licor 43 con espresso recién preparado.", price: 190, cost: 62, category: "cocteles", image: photo("Carajillo", "cocteles"), inventory: 32, minInventory: 10, demand: 66, wasteRisk: 14 },
+	{ id: 11, name: "Gin Tonic", description: "Ginebra, agua tónica, cítricos y botánicos.", price: 190, cost: 68, category: "cocteles", image: photo("Gin Tonic", "cocteles"), inventory: 18, minInventory: 8, demand: 49, wasteRisk: 18 },
+	{ id: 12, name: "Cubeta Nacional", description: "10 cervezas nacionales con hielo al centro de mesa.", price: 790, cost: 335, category: "cervezas", image: photo("Cubeta Nacional", "cervezas"), inventory: 58, minInventory: 20, demand: 75, wasteRisk: 48, manualBoost: 7, promotable: true },
+	{ id: 13, name: "Corona Extra", description: "Botella 355 ml servida bien fría.", price: 85, cost: 38, category: "cervezas", image: photo("Corona Extra", "cervezas"), inventory: 95, minInventory: 35, demand: 69, wasteRisk: 34 },
+	{ id: 14, name: "Heineken", description: "Cerveza lager botella 355 ml.", price: 100, cost: 46, category: "cervezas", image: photo("Heineken", "cervezas"), inventory: 44, minInventory: 18, demand: 52, wasteRisk: 20 },
+	{ id: 15, name: "Alitas BBQ", description: "10 piezas con salsa BBQ, apio, zanahoria y ranch.", price: 190, cost: 76, category: "alimentos", image: photo("Alitas BBQ", "alimentos"), inventory: 23, minInventory: 8, demand: 62, wasteRisk: 82, expiresInDays: 2, manualBoost: 10, promotable: true, pairsWith: ["Cubeta Nacional"] },
+	{ id: 16, name: "Nachos Supreme", description: "Totopos, queso, jalapeños, carne, pico de gallo y crema.", price: 180, cost: 62, category: "alimentos", image: photo("Nachos Supreme", "alimentos"), inventory: 31, minInventory: 10, demand: 58, wasteRisk: 70, expiresInDays: 3, promotable: true, pairsWith: ["Pack Precopeo"] },
+	{ id: 17, name: "Tacos de Arrachera", description: "Orden de 4 tacos con guacamole, salsa tatemada y limón.", price: 260, cost: 118, category: "alimentos", image: photo("Tacos de Arrachera", "alimentos"), inventory: 16, minInventory: 6, demand: 47, wasteRisk: 74, expiresInDays: 2, promotable: true },
+	{ id: 18, name: "Mini Burgers", description: "Tres mini hamburguesas con papas gajo.", price: 230, cost: 92, category: "alimentos", image: photo("Mini Burgers", "alimentos"), inventory: 14, minInventory: 6, demand: 54, wasteRisk: 64, expiresInDays: 3 },
+	{ id: 19, name: "Papas Gajo con Queso", description: "Papas gajo con queso fundido, tocino, jalapeños y crema.", price: 160, cost: 48, category: "alimentos", image: photo("Papas Gajo con Queso", "alimentos"), inventory: 39, minInventory: 14, demand: 44, wasteRisk: 58, promotable: true },
+	{ id: 20, name: "Red Bull", description: "Bebida energética 250 ml.", price: 90, cost: 41, category: "sin-alcohol", image: photo("Red Bull", "sin-alcohol"), inventory: 92, minInventory: 24, demand: 73, wasteRisk: 28, manualBoost: 5, promotable: true },
+	{ id: 21, name: "Agua Mineral", description: "Botella 355 ml.", price: 60, cost: 18, category: "sin-alcohol", image: photo("Agua Mineral", "sin-alcohol"), inventory: 120, minInventory: 35, demand: 71, wasteRisk: 12 },
+	{ id: 22, name: "Mocktail Frutos Rojos", description: "Frutos rojos, limón, hierbabuena y soda.", price: 120, cost: 38, category: "sin-alcohol", image: photo("Mocktail Frutos Rojos", "sin-alcohol"), inventory: 22, minInventory: 8, demand: 38, wasteRisk: 62, expiresInDays: 2, promotable: true },
+];
+
+const containImageCategories: Partial<Record<Category, boolean>> = {
+	botellas: true,
+	cervezas: true,
+	"sin-alcohol": true,
+};
+
+function isDisplayable(item: MenuItem) {
+	return item.inventory > Math.max(1, item.minInventory * 0.8);
+}
+
+function canBeFeatured(item: MenuItem) {
+	return item.inventory > item.minInventory * 1.45;
+}
+
+function rankItem(item: MenuItem): RankedItem {
+	const marginRate = Math.round(((item.price - item.cost) / item.price) * 100);
+	const stockPressure = Math.max(
 		0,
+		Math.min(
+			100,
+			((item.inventory - item.minInventory) / Math.max(item.minInventory, 1)) *
+				24,
+		),
 	);
+	const lowInventoryPenalty =
+		item.inventory <= item.minInventory
+			? 85
+			: item.inventory <= item.minInventory * 1.5
+				? 42
+				: 0;
+	const expiryBoost = item.expiresInDays
+		? Math.max(0, 34 - item.expiresInDays * 8)
+		: 0;
+	const score = Math.max(0, Math.round(
+		marginRate * 0.34 +
+			item.demand * 0.22 +
+			item.wasteRisk * 0.2 +
+			stockPressure * 0.14 +
+			expiryBoost +
+			(item.manualBoost ?? 0) -
+			lowInventoryPenalty,
+	));
+	const customerTag = getCustomerTag(item, score);
+	const layout = score >= 86 ? "hero" : score >= 68 ? "feature" : "compact";
+	return { ...item, score, customerTag, layout };
+}
 
-	const changeQuantity = (id: number, delta: number) => {
-		setCart((current) => {
-			const next = Math.max(0, (current[id] ?? 0) + delta);
-			if (next === 0) {
-				const copy = { ...current };
-				delete copy[id];
-				return copy;
-			}
-			return { ...current, [id]: next };
-		});
-	};
+function getCustomerTag(item: MenuItem, score: number) {
+	if (item.category === "promos") return "Especial";
+	if (item.category === "botellas" && score >= 68) return "VIP";
+	if (item.expiresInDays && item.expiresInDays <= 2) return "Por tiempo limitado";
+	if (item.demand >= 75) return "Favorito";
+	if (item.promotable) return "Recomendado";
+	return "Clásico";
+}
 
-	const sendDemoOrder = () => {
-		if (!table.trim()) {
-			toast.error("Escribe el número de tu mesa.");
-			return;
-		}
-		if (itemCount === 0) return;
-		toast.success(`Pedido demo enviado desde ${table.trim()}`);
-		setCart({});
-		setTable("");
-		setCartOpen(false);
-	};
+function promoTitle(item: RankedItem) {
+	if (item.category === "promos") return "Paquete de la noche";
+	if (item.pairsWith?.length) return `Ideal con ${item.pairsWith[0]}`;
+	if (item.category === "alimentos") return "Perfecto para compartir";
+	if (item.category === "botellas") return "Servicio especial";
+	return "Recomendado de la casa";
+}
+
+function sectionLabel(category: Category) {
+	const section = sections.find((item) => item.id === category);
+	return section?.label ?? "Carta";
+}
+
+function imageTreatment(category: Category) {
+	return containImageCategories[category] ? "contain" : "cover";
+}
+
+function ProductPhoto({
+	item,
+	theme,
+	size,
+}: {
+	item: MenuItem;
+	theme: Theme;
+	size: "hero" | "card" | "thumb";
+}) {
+	const t = themeStyles[theme];
+	const treatment = imageTreatment(item.category);
+	const sizeClass =
+		size === "hero"
+			? "h-[360px]"
+			: size === "card"
+				? "h-64"
+				: "h-20 w-20 shrink-0";
+	const radius = size === "thumb" ? "rounded-2xl" : "rounded-[1.75rem]";
+
+	if (treatment === "contain") {
+		return (
+			<div className={`${sizeClass} ${radius} ${t.imagePanel} overflow-hidden p-5`}>
+				<img
+					src={item.image}
+					alt={item.name}
+					className="h-full w-full object-contain"
+					loading={size === "hero" ? "eager" : "lazy"}
+					referrerPolicy="no-referrer"
+				/>
+			</div>
+		);
+	}
 
 	return (
-		<div className="min-h-screen bg-[#0b0a08] text-[#f4ecd8]">
-			{/* Cover */}
-			<header className="relative border-[#caa45e]/20 border-b px-4 py-14 text-center sm:py-20">
-				<div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_0%,rgba(202,164,94,0.12),transparent_55%)]" />
-				<div className="relative mx-auto max-w-2xl">
-					<p className="text-[11px] text-[#caa45e] uppercase tracking-[0.35em]">
-						Antro POS
-					</p>
-					<h1
-						className={`${display.className} mt-4 text-5xl sm:text-6xl`}
-					>
-						Carta Nocturna
-					</h1>
-					<div className="mx-auto mt-6 flex items-center justify-center gap-3 text-[#caa45e]/50">
-						<span className="h-px w-12 bg-[#caa45e]/40" />
-						<MartiniIcon className="h-4 w-4" />
-						<span className="h-px w-12 bg-[#caa45e]/40" />
+		<div className={`${sizeClass} ${radius} overflow-hidden`}>
+			<img
+				src={item.image}
+				alt={item.name}
+				className="h-full w-full object-cover transition duration-500 group-hover:scale-[1.03]"
+				loading={size === "hero" ? "eager" : "lazy"}
+				referrerPolicy="no-referrer"
+			/>
+		</div>
+	);
+}
+
+export default function DigitalMenuPage() {
+	const [theme, setTheme] = useState<Theme>("dark");
+	const t = themeStyles[theme];
+
+	const ranked = useMemo(
+		() => items.filter(isDisplayable).map(rankItem).sort((a, b) => b.score - a.score),
+		[],
+	);
+	const hero = ranked.find(canBeFeatured) ?? ranked[0];
+	const highlights = ranked.filter((item) => item.id !== hero?.id && canBeFeatured(item)).slice(0, 4);
+	const promoted = ranked.filter((item) => item.promotable && canBeFeatured(item)).slice(0, 6);
+	const orderedSections = sections
+		.map((section) => {
+			const sectionItems = ranked.filter((item) => item.category === section.id);
+			const sectionWeight =
+				sectionItems.reduce((sum, item) => sum + item.score, 0) /
+				Math.max(sectionItems.length, 1);
+			return { ...section, items: sectionItems, sectionWeight };
+		})
+		.filter((section) => section.items.length > 0)
+		.sort((a, b) => b.sectionWeight - a.sectionWeight);
+
+	return (
+		<div className={`min-h-screen ${t.page}`}>
+			<header className={`relative overflow-hidden border-b ${t.border}`}>
+				<div className={`absolute inset-0 ${t.hero}`} />
+				<div className="relative mx-auto max-w-7xl px-4 py-10 lg:py-16">
+					<div className="mb-10 flex flex-wrap items-center justify-between gap-4">
+						<div>
+							<p className={`text-sm ${t.soft}`}>Blinder · carta de noche</p>
+						</div>
+						<ThemeSwitch theme={theme} setTheme={setTheme} />
 					</div>
-					<p className="mt-6 text-sm text-[#f4ecd8]/55 leading-relaxed">
-						Coctelería de autor, botellas y algo para picar. Precios
-						expresados en pesos mexicanos.
-					</p>
+
+					<div className="grid gap-10 lg:grid-cols-[0.86fr_1.14fr] lg:items-center">
+						<div>
+							<h1
+								className={`${displayClass} ${t.title} max-w-3xl text-5xl leading-none sm:text-7xl`}
+							>
+								Carta de noche
+							</h1>
+							<p className={`mt-5 max-w-xl text-lg ${t.muted}`}>
+								Botellas, cocteles, cervezas, alimentos para compartir y especiales
+								de temporada.
+							</p>
+							<div className="mt-8 grid gap-3 sm:grid-cols-3">
+								<MiniCategory title="Bebidas" text="Botellas, cocteles y cervezas." theme={theme} />
+								<MiniCategory title="Comida" text="Botanas y platos para mesa." theme={theme} />
+								<MiniCategory title="Especiales" text="Paquetes y promociones." theme={theme} />
+							</div>
+						</div>
+
+						<HeroCard item={hero} theme={theme} />
+					</div>
 				</div>
 			</header>
 
-			{/* Index + search */}
-			<div className="sticky top-0 z-20 border-[#caa45e]/15 border-b bg-[#0b0a08]/95 backdrop-blur-xl">
-				<div className="mx-auto flex max-w-2xl flex-col gap-4 px-4 py-4">
-					<div className="relative">
-						<SearchIcon className="absolute top-1/2 left-1 h-4 w-4 -translate-y-1/2 text-[#f4ecd8]/35" />
-						<Input
-							value={search}
-							onChange={(event) => setSearch(event.target.value)}
-							placeholder="Buscar en la carta..."
-							className="rounded-none border-0 border-[#caa45e]/25 border-b bg-transparent pl-7 text-[#f4ecd8] placeholder:text-[#f4ecd8]/35 focus-visible:ring-0"
-						/>
-					</div>
-					<nav className="flex flex-wrap items-center justify-center gap-x-5 gap-y-2 text-xs uppercase tracking-[0.2em]">
-						{sections.map((section, index) => (
-							<a
-								key={section.id}
-								href={`#${section.id}`}
-								className="text-[#f4ecd8]/55 transition hover:text-[#caa45e]"
-							>
-								{index > 0 && (
-									<span className="mr-5 text-[#caa45e]/30">·</span>
-								)}
-								{section.label}
-							</a>
+			<main className="mx-auto max-w-7xl space-y-14 px-4 py-10">
+				<section>
+					<SectionHeading
+						kicker="de la casa"
+						title="Sugerencias de la casa"
+						note="Bebidas y alimentos seleccionados para la noche."
+						theme={theme}
+					/>
+					<div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+						{highlights.map((item) => (
+							<HighlightCard key={item.id} item={item} theme={theme} />
 						))}
-					</nav>
-				</div>
-			</div>
+					</div>
+				</section>
 
-			{/* Sections */}
-			<main className="mx-auto max-w-2xl px-4 py-12 sm:px-0">
-				{groups.map((section) => {
-					const Icon = categoryIcons[section.id];
+				<section>
+					<SectionHeading
+						kicker="especiales"
+						title="Especiales y paquetes"
+						note="Opciones para mesa, grupos y celebraciones."
+						theme={theme}
+					/>
+					<div className="grid gap-4 lg:grid-cols-3">
+						{promoted.map((item) => (
+							<PromoCard key={item.id} item={item} theme={theme} />
+						))}
+					</div>
+				</section>
+
+				{orderedSections.map((section) => {
+					const Icon = section.icon;
+					const featured = section.items.filter((item) => item.layout !== "compact").slice(0, 2);
+					const compact = section.items.filter((item) => !featured.includes(item));
 					return (
-						<section
-							key={section.id}
-							id={section.id}
-							className="mb-14 scroll-mt-32"
-						>
-							<div className="mb-7 flex items-center gap-3">
-								<Icon className="h-5 w-5 text-[#caa45e]" />
-								<h2 className={`${display.className} text-2xl`}>
-									{section.label}
-								</h2>
-								{section.note && (
-									<span className="text-[#f4ecd8]/40 text-xs italic">
-										{section.note}
-									</span>
-								)}
-								<span className="ml-auto h-px flex-1 bg-[#caa45e]/15" />
+						<section key={section.id}>
+							<div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+								<div>
+									<div className="flex items-center gap-2 text-[#a8843d]">
+										<Icon className="h-5 w-5" />
+										<p className="text-xs uppercase tracking-[0.28em]">
+											{section.group}
+										</p>
+									</div>
+									<h2
+										className={`${displayClass} ${t.title} mt-1 text-4xl`}
+									>
+										{section.label}
+									</h2>
+									<p className={`mt-1 max-w-2xl ${t.muted}`}>{section.note}</p>
+								</div>
 							</div>
 
-							<ul className="space-y-7">
-								{section.items.map((item) => (
-									<li key={item.id}>
-										<div className="flex items-baseline gap-3">
-											<h3 className="text-lg">
-												{item.name}
-												{item.popular && (
-													<span className="ml-2 text-[10px] text-[#caa45e]/80 uppercase tracking-[0.2em]">
-														Favorito
-													</span>
-												)}
-											</h3>
-											<span className="flex-1 translate-y-[-3px] border-[#caa45e]/20 border-b border-dotted" />
-											<span
-												className={`${display.className} text-lg text-[#caa45e]`}
-											>
-												{money.format(item.price)}
-											</span>
-										</div>
-										<div className="mt-1.5 flex items-end justify-between gap-4">
-											<p className="text-[#f4ecd8]/45 text-sm italic">
-												{item.description}
-											</p>
-											{cart[item.id] ? (
-												<div className="flex shrink-0 items-center gap-3 text-sm">
-													<button
-														type="button"
-														onClick={() => changeQuantity(item.id, -1)}
-														className="flex h-7 w-7 items-center justify-center rounded-full border border-[#caa45e]/30 text-[#caa45e] hover:bg-[#caa45e]/10"
-													>
-														<MinusIcon className="h-3.5 w-3.5" />
-													</button>
-													<span className="w-4 text-center">
-														{cart[item.id]}
-													</span>
-													<button
-														type="button"
-														onClick={() => changeQuantity(item.id, 1)}
-														className="flex h-7 w-7 items-center justify-center rounded-full bg-[#caa45e] text-[#0b0a08] hover:bg-[#dcb978]"
-													>
-														<PlusIcon className="h-3.5 w-3.5" />
-													</button>
-												</div>
-											) : (
-												<button
-													type="button"
-													onClick={() => changeQuantity(item.id, 1)}
-													className="shrink-0 text-[#caa45e] text-xs uppercase tracking-[0.2em] hover:text-[#dcb978]"
-												>
-													+ Agregar
-												</button>
-											)}
-										</div>
-									</li>
+							{featured.length > 0 && (
+								<div className="mb-5 grid gap-5 lg:grid-cols-2">
+									{featured.map((item) => (
+										<FeatureCard key={item.id} item={item} theme={theme} />
+									))}
+								</div>
+							)}
+
+							<div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+								{compact.map((item) => (
+									<CompactCard key={item.id} item={item} theme={theme} />
 								))}
-							</ul>
+							</div>
 						</section>
 					);
 				})}
-
-				{groups.length === 0 && (
-					<p className="py-20 text-center text-[#f4ecd8]/40 italic">
-						No encontramos nada con esa búsqueda.
-					</p>
-				)}
 			</main>
 
-			<footer className="border-[#caa45e]/15 border-t px-4 py-8 text-center text-[#f4ecd8]/35 text-xs">
-				Menú de demostración · El consumo de alcohol es responsabilidad de
-				cada persona.
+			<footer className={`border-t px-4 py-8 text-center text-xs ${t.border} ${t.soft}`}>
+				Menú demo · precios en MXN · el consumo de alcohol es responsabilidad de cada persona.
 			</footer>
-
-			{/* Floating cart trigger */}
-			{itemCount > 0 && !cartOpen && (
-				<button
-					type="button"
-					onClick={() => setCartOpen(true)}
-					className="fixed right-4 bottom-4 left-4 z-30 flex items-center justify-between rounded-full border border-[#caa45e]/40 bg-[#0b0a08] px-6 py-3.5 text-[#f4ecd8] shadow-2xl shadow-black/60 sm:right-6 sm:left-auto sm:min-w-72"
-				>
-					<span className="text-sm uppercase tracking-[0.15em]">
-						Tu pedido · {itemCount}
-					</span>
-					<span className={`${display.className} text-[#caa45e]`}>
-						{money.format(total)}
-					</span>
-				</button>
-			)}
-
-			{/* Cart drawer */}
-			{cartOpen && (
-				<div className="fixed inset-0 z-50">
-					<button
-						type="button"
-						aria-label="Cerrar pedido"
-						onClick={() => setCartOpen(false)}
-						className="absolute inset-0 bg-black/70 backdrop-blur-sm"
-					/>
-					<aside className="absolute top-0 right-0 flex h-full w-full max-w-md flex-col border-[#caa45e]/20 border-l bg-[#0b0a08] text-[#f4ecd8] shadow-2xl">
-						<div className="flex items-center justify-between border-[#caa45e]/15 border-b p-5">
-							<div>
-								<h2 className={`${display.className} text-xl`}>
-									Tu pedido
-								</h2>
-								<p className="text-[#f4ecd8]/40 text-xs italic">
-									Demostración sin cobro real
-								</p>
-							</div>
-							<Button
-								size="icon"
-								variant="ghost"
-								onClick={() => setCartOpen(false)}
-								className="text-[#f4ecd8] hover:bg-[#caa45e]/10 hover:text-[#f4ecd8]"
-							>
-								<XIcon className="h-5 w-5" />
-							</Button>
-						</div>
-						<div className="flex-1 space-y-5 overflow-y-auto p-5">
-							{cartItems.length === 0 ? (
-								<p className="pt-16 text-center text-[#f4ecd8]/35 italic">
-									Tu pedido está vacío.
-								</p>
-							) : (
-								cartItems.map((item) => (
-									<div key={item.id}>
-										<div className="flex items-baseline gap-3">
-											<p>{item.name}</p>
-											<span className="flex-1 translate-y-[-3px] border-[#caa45e]/20 border-b border-dotted" />
-											<span className="text-[#caa45e]">
-												{money.format(item.price * item.quantity)}
-											</span>
-										</div>
-										<div className="mt-1.5 flex justify-end gap-3 text-sm">
-											<button
-												type="button"
-												onClick={() => changeQuantity(item.id, -1)}
-												className="flex h-7 w-7 items-center justify-center rounded-full border border-[#caa45e]/30 text-[#caa45e] hover:bg-[#caa45e]/10"
-											>
-												<MinusIcon className="h-3.5 w-3.5" />
-											</button>
-											<span className="w-4 text-center">
-												{item.quantity}
-											</span>
-											<button
-												type="button"
-												onClick={() => changeQuantity(item.id, 1)}
-												className="flex h-7 w-7 items-center justify-center rounded-full bg-[#caa45e] text-[#0b0a08] hover:bg-[#dcb978]"
-											>
-												<PlusIcon className="h-3.5 w-3.5" />
-											</button>
-										</div>
-									</div>
-								))
-							)}
-						</div>
-						<div className="space-y-4 border-[#caa45e]/15 border-t p-5">
-							<div className="space-y-1.5">
-								<label
-									htmlFor="demo-table"
-									className="text-[#f4ecd8]/55 text-xs uppercase tracking-[0.2em]"
-								>
-									Tu mesa
-								</label>
-								<Input
-									id="demo-table"
-									value={table}
-									onChange={(event) => setTable(event.target.value)}
-									placeholder="Ej. Mesa 4"
-									className="rounded-none border-0 border-[#caa45e]/25 border-b bg-transparent text-[#f4ecd8] focus-visible:ring-0"
-								/>
-							</div>
-							<div className="flex items-baseline justify-between">
-								<span className="text-[#f4ecd8]/55 text-sm">Total</span>
-								<strong className={`${display.className} text-xl text-[#caa45e]`}>
-									{money.format(total)}
-								</strong>
-							</div>
-							<Button
-								onClick={sendDemoOrder}
-								disabled={itemCount === 0}
-								className="w-full rounded-full bg-[#caa45e] text-[#0b0a08] hover:bg-[#dcb978]"
-								size="lg"
-							>
-								Enviar pedido demo
-							</Button>
-						</div>
-					</aside>
-				</div>
-			)}
 		</div>
+	);
+}
+
+function ThemeSwitch({
+	theme,
+	setTheme,
+}: {
+	theme: Theme;
+	setTheme: (theme: Theme) => void;
+}) {
+	return (
+		<div className="flex rounded-full border border-current/15 p-1">
+			<button
+				type="button"
+				onClick={() => setTheme("dark")}
+				className={`flex items-center gap-1 rounded-full px-3 py-1.5 text-xs transition ${
+					theme === "dark" ? "bg-white text-black" : "text-current/60"
+				}`}
+			>
+				<MoonIcon className="h-3.5 w-3.5" />
+				Oscuro
+			</button>
+			<button
+				type="button"
+				onClick={() => setTheme("light")}
+				className={`flex items-center gap-1 rounded-full px-3 py-1.5 text-xs transition ${
+					theme === "light" ? "bg-black text-white" : "text-current/60"
+				}`}
+			>
+				<SunIcon className="h-3.5 w-3.5" />
+				Claro
+			</button>
+		</div>
+	);
+}
+
+function MiniCategory({
+	title,
+	text,
+	theme,
+}: {
+	title: string;
+	text: string;
+	theme: Theme;
+}) {
+	const t = themeStyles[theme];
+	return (
+		<div className={`rounded-3xl border p-4 ${t.cardSoft}`}>
+			<p className={`${displayClass} ${t.title} text-xl`}>{title}</p>
+			<p className={`mt-1 text-sm ${t.muted}`}>{text}</p>
+		</div>
+	);
+}
+
+function SectionHeading({
+	kicker,
+	title,
+	note,
+	theme,
+}: {
+	kicker: string;
+	title: string;
+	note: string;
+	theme: Theme;
+}) {
+	const t = themeStyles[theme];
+	return (
+		<div className="mb-6">
+			<p className="text-[#a8843d] text-xs uppercase tracking-[0.28em]">{kicker}</p>
+			<h2 className={`${displayClass} ${t.title} mt-1 text-4xl`}>{title}</h2>
+			<p className={`mt-2 max-w-3xl ${t.muted}`}>{note}</p>
+		</div>
+	);
+}
+
+function HeroCard({ item, theme }: { item: RankedItem; theme: Theme }) {
+	const t = themeStyles[theme];
+	return (
+		<article className={`group grid overflow-hidden rounded-[2rem] border shadow-2xl lg:grid-cols-[1.05fr_0.95fr] ${t.card}`}>
+			<ProductPhoto item={item} theme={theme} size="hero" />
+			<div className="flex flex-col justify-center p-6 lg:p-8">
+				<h2 className={`${displayClass} ${t.title} text-4xl`}>{item.name}</h2>
+				<p className={`mt-3 ${t.muted}`}>{item.description}</p>
+				<div className="mt-8 flex items-end justify-between gap-4">
+					<p className={`text-sm ${t.soft}`}>Especial de la noche</p>
+					<p className="font-bold text-[#a8843d] text-3xl">{money.format(item.price)}</p>
+				</div>
+			</div>
+		</article>
+	);
+}
+
+function HighlightCard({ item, theme }: { item: RankedItem; theme: Theme }) {
+	const t = themeStyles[theme];
+	return (
+		<article className={`group overflow-hidden rounded-[1.75rem] border shadow-xl ${t.card}`}>
+			<ProductPhoto item={item} theme={theme} size="card" />
+			<div className="p-5">
+				<h3 className={`font-bold text-xl ${t.title}`}>{item.name}</h3>
+				<p className={`mt-1 line-clamp-2 text-sm ${t.muted}`}>{item.description}</p>
+				<div className="mt-5 flex items-end justify-between">
+					<p className={`text-xs ${t.soft}`}>{sectionLabel(item.category)}</p>
+					<p className="font-bold text-[#a8843d] text-xl">{money.format(item.price)}</p>
+				</div>
+			</div>
+		</article>
+	);
+}
+
+function PromoCard({ item, theme }: { item: RankedItem; theme: Theme }) {
+	const t = themeStyles[theme];
+	return (
+		<article className={`rounded-3xl border p-5 ${t.cardSoft}`}>
+			<div className="mb-4 flex items-start justify-between gap-4">
+				<div>
+					<h3 className={`font-bold text-xl ${t.title}`}>{item.name}</h3>
+					<p className={`mt-1 text-sm ${t.muted}`}>
+						{item.pairsWith?.length
+							? `Sugerido con ${item.pairsWith.join(", ")}.`
+							: item.description}
+					</p>
+				</div>
+				<p className="font-bold text-[#a8843d]">{money.format(item.price)}</p>
+			</div>
+		</article>
+	);
+}
+
+function FeatureCard({ item, theme }: { item: RankedItem; theme: Theme }) {
+	const t = themeStyles[theme];
+	return (
+		<article className={`group overflow-hidden rounded-[1.75rem] border shadow-xl ${t.card}`}>
+			<ProductPhoto item={item} theme={theme} size="card" />
+			<div className="p-5">
+				<div className="flex items-start justify-between gap-4">
+					<div>
+						<h3 className={`font-bold text-2xl ${t.title}`}>{item.name}</h3>
+						<p className={`mt-1 text-sm ${t.muted}`}>{item.description}</p>
+					</div>
+					<p className="shrink-0 font-bold text-[#a8843d] text-xl">
+						{money.format(item.price)}
+					</p>
+				</div>
+			</div>
+		</article>
+	);
+}
+
+function CompactCard({ item, theme }: { item: RankedItem; theme: Theme }) {
+	const t = themeStyles[theme];
+	return (
+		<article className={`flex gap-4 rounded-3xl border p-3 ${t.cardSoft}`}>
+			<ProductPhoto item={item} theme={theme} size="thumb" />
+			<div className="min-w-0 flex-1">
+				<div className="flex items-start justify-between gap-3">
+					<div>
+						<h3 className={`font-semibold ${t.title}`}>{item.name}</h3>
+						<p className={`mt-1 line-clamp-2 text-sm ${t.muted}`}>{item.description}</p>
+					</div>
+					<p className="shrink-0 font-bold text-[#a8843d]">{money.format(item.price)}</p>
+				</div>
+			</div>
+		</article>
 	);
 }
