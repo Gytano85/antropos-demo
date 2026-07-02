@@ -501,7 +501,7 @@ export async function seed() {
 	}
 
 	// ── Cities (IBGE) ─────────────────────────────────────────────────────────
-	const cityCount = await seedCities();
+	const cityCount = process.env.DEMO_LIGHT_SEED === "1" ? 0 : await seedCities();
 
 	console.log(
 		`Seeded: 3 payment methods, 1 demo user (${DEMO_EMAIL} / ${DEMO_PASSWORD}), ` +
