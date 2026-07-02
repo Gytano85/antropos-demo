@@ -1,11 +1,16 @@
 import { PGlite } from "@electric-sql/pglite";
-import { drizzle } from "drizzle-orm/pglite";
+import { drizzle as drizzleNodePostgres } from "drizzle-orm/node-postgres";
+import { drizzle as drizzlePglite } from "drizzle-orm/pglite";
 import { cpSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
+import pg from "pg";
 import * as schema from "./schema";
+
+const { Pool } = pg;
 
 const globalForPGlite = globalThis as unknown as {
   pglite: PGlite | undefined;
+  pgPool: pg.Pool | undefined;
 };
 
 function resolveDataDir() {
@@ -23,11 +28,25 @@ function resolveDataDir() {
   return target;
 }
 
-const dataDir = resolveDataDir();
-mkdirSync(dataDir, { recursive: true });
+function createDb() {
+  if (process.env.DATABASE_URL) {
+    const pool =
+      globalForPGlite.pgPool ??
+      new Pool({
+        connectionString: process.env.DATABASE_URL,
+        max: 3,
+      });
 
-export const pglite = globalForPGlite.pglite ?? new PGlite(dataDir);
+    globalForPGlite.pgPool = pool;
+    return drizzleNodePostgres(pool, { schema });
+  }
 
-globalForPGlite.pglite = pglite;
+  const dataDir = resolveDataDir();
+  mkdirSync(dataDir, { recursive: true });
+  const pglite = globalForPGlite.pglite ?? new PGlite(dataDir);
 
-export const db = drizzle({ client: pglite, schema });
+  globalForPGlite.pglite = pglite;
+  return drizzlePglite({ client: pglite, schema });
+}
+
+export const db = createDb();
