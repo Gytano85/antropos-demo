@@ -14,6 +14,13 @@ export async function login(formData: FormData) {
   const password = formData.get("password") as string;
 
   if (email === DEMO_EMAIL && password === DEMO_PASSWORD) {
+    if (process.env.VERCEL && !process.env.DEMO_LIGHT_SEED) {
+      process.env.DEMO_LIGHT_SEED = "1";
+    }
+
+    const { seed } = await import("@/lib/db/seed");
+    await seed();
+
     const cookieStore = await cookies();
     cookieStore.set(DEMO_COOKIE, "1", {
       httpOnly: true,

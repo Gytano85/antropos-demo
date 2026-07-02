@@ -1,16 +1,22 @@
 import { cookies, headers } from "next/headers";
+import { eq } from "drizzle-orm";
 import { auth } from "./auth";
-
-const DEMO_USER = {
-  id: "i0v8ymZ0dln8QhoUforXYrj4VM6eifos",
-  name: "Test User",
-  email: "test@example.com",
-};
+import { db } from "./db";
+import { user } from "./db/schema";
 
 export async function getAuthUser() {
   const cookieStore = await cookies();
   if (cookieStore.get("antropos_demo_session")?.value === "1") {
-    return DEMO_USER;
+    const demoUser = await db.query.user.findFirst({
+      where: eq(user.email, "test@example.com"),
+      columns: {
+        id: true,
+        name: true,
+        email: true,
+      },
+    });
+
+    if (demoUser) return demoUser;
   }
 
   const session = await auth.api.getSession({
