@@ -3,10 +3,12 @@ import { type NextRequest, NextResponse } from "next/server";
 
 export async function proxy(request: NextRequest) {
 	const sessionCookie = getSessionCookie(request);
+	const demoSessionCookie = request.cookies.get("antropos_demo_session")?.value;
 	const { pathname } = request.nextUrl;
 
 	if (
 		!sessionCookie &&
+		demoSessionCookie !== "1" &&
 		!pathname.startsWith("/login") &&
 		!pathname.startsWith("/signup") &&
 		!pathname.startsWith("/menu") &&
