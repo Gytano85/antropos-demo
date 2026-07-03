@@ -54,7 +54,7 @@ import {
 import { useRouter, useSearchParams } from "next/navigation";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
-import Products from "@/app/admin/products/page";
+import { ProductImage } from "@/components/product-image";
 import { useTRPC } from "@/lib/trpc/client";
 import type { RouterOutputs } from "@/lib/trpc/router";
 
@@ -151,12 +151,174 @@ export default function InventoryPage() {
 				))}
 			</div>
 
-			{active === "products" && <Products />}
+			{active === "products" && <InventoryProductsSection />}
 			{active === "restocking" && <RestockingSection />}
 			{active === "recipes" && <RecipesSection />}
 			{active === "audit" && <AuditSection />}
 			{active === "quality" && <QualitySection />}
 			{active === "alerts" && <AlertsSection onSelectTab={selectTab} />}
+		</div>
+	);
+}
+
+function InventoryProductsSection() {
+	const trpc = useTRPC();
+	const { data: products = [], isLoading: productsLoading } = useQuery(
+		trpc.products.list.queryOptions(),
+	);
+	const { data: restocking, isLoading: restockingLoading } = useQuery(
+		trpc.restocking.recommendations.queryOptions({
+			historyDays: 30,
+			leadTimeDays: 7,
+			coverageDays: 14,
+			safetyStockPct: 25,
+			urgentDays: 3,
+			soonDays: 7,
+		}),
+	);
+
+	const restockingByProduct = useMemo(() => {
+		const map = new Map<number, NonNullable<typeof restocking>["items"][number]>();
+		for (const item of restocking?.items ?? []) map.set(item.productId, item);
+		return map;
+	}, [restocking]);
+
+	const rows = useMemo(
+		() =>
+			products.map((product) => {
+				const restock = restockingByProduct.get(product.id);
+				const status =
+					restock?.status === "urgent"
+						? { label: "Compra urgente", severity: "critical" }
+						: restock?.status === "soon"
+							? { label: "Stock bajo", severity: "warning" }
+							: product.in_stock <= 0
+								? { label: "Sin stock", severity: "critical" }
+								: { label: "En stock", severity: "ok" };
+
+				return {
+					product,
+					status,
+					demand:
+						restock && restock.averageDailyDemand > 0
+							? `${restock.averageDailyDemand}/día`
+							: "Sin demanda",
+					coverage:
+						restock?.daysRemaining == null
+							? "—"
+							: `${restock.daysRemaining} días`,
+					recommended:
+						restock && restock.recommendedQuantity > 0
+							? restock.recommendedQuantity
+							: 0,
+				};
+			}),
+		[products, restockingByProduct],
+	);
+
+	const urgentCount = rows.filter((row) => row.status.severity === "critical").length;
+	const lowCount = rows.filter((row) => row.status.severity === "warning").length;
+	const totalStock = rows.reduce((sum, row) => sum + row.product.in_stock, 0);
+
+	return (
+		<div className="space-y-6">
+			<div className="grid gap-4 md:grid-cols-4">
+				<MetricCard
+					icon={PackageIcon}
+					label="Productos"
+					value={productsLoading ? "…" : products.length}
+					detail="Inventario vendible"
+					accent="text-blue-600"
+				/>
+				<MetricCard
+					icon={ArchiveRestoreIcon}
+					label="Existencias"
+					value={productsLoading ? "…" : totalStock}
+					detail="Unidades actuales"
+					accent="text-emerald-600"
+				/>
+				<MetricCard
+					icon={AlertTriangleIcon}
+					label="Compra urgente"
+					value={restockingLoading ? "…" : urgentCount}
+					detail="Según demanda"
+					accent="text-red-600"
+				/>
+				<MetricCard
+					icon={CalendarClockIcon}
+					label="Stock bajo"
+					value={restockingLoading ? "…" : lowCount}
+					detail="Reabastecer pronto"
+					accent="text-amber-600"
+				/>
+			</div>
+
+			<Card>
+				<CardHeader>
+					<CardTitle>Tabla de inventario de productos</CardTitle>
+					<CardDescription>
+						Lista completa de productos vendibles con existencia actual, demanda calculada, cobertura y compra sugerida.
+					</CardDescription>
+				</CardHeader>
+				<CardContent>
+					<div className="overflow-x-auto rounded-lg border">
+						<Table>
+							<TableHeader>
+								<TableRow>
+									<TableHead>Producto</TableHead>
+									<TableHead>Categoría</TableHead>
+									<TableHead>Precio</TableHead>
+									<TableHead>Stock</TableHead>
+									<TableHead>Estado</TableHead>
+									<TableHead>Demanda</TableHead>
+									<TableHead>Cobertura</TableHead>
+									<TableHead>Comprar</TableHead>
+								</TableRow>
+							</TableHeader>
+							<TableBody>
+								{rows.map(({ product, status, demand, coverage, recommended }) => (
+									<TableRow key={product.id}>
+										<TableCell>
+											<div className="flex min-w-[220px] items-center gap-3">
+												<ProductImage
+													src={product.image_url}
+													category={product.category}
+													alt={product.name}
+													className="h-12 w-12"
+												/>
+												<div>
+													<p className="font-medium">{product.name}</p>
+													<p className="line-clamp-1 text-muted-foreground text-xs">
+														{product.description ?? "Sin descripción"}
+													</p>
+												</div>
+											</div>
+										</TableCell>
+										<TableCell className="capitalize">{product.category ?? "Sin categoría"}</TableCell>
+										<TableCell>{formatMoney(product.price)}</TableCell>
+										<TableCell className="font-semibold">{product.in_stock}</TableCell>
+										<TableCell>
+											<StatusBadge severity={status.severity} label={status.label} />
+										</TableCell>
+										<TableCell>{demand}</TableCell>
+										<TableCell>{coverage}</TableCell>
+										<TableCell className="font-semibold">
+											{recommended > 0 ? recommended : "—"}
+										</TableCell>
+									</TableRow>
+								))}
+								{!productsLoading && rows.length === 0 && (
+									<TableRow>
+										<TableCell colSpan={8} className="py-10 text-center text-muted-foreground">
+											No hay productos cargados para este usuario demo.
+										</TableCell>
+									</TableRow>
+								)}
+							</TableBody>
+						</Table>
+					</div>
+				</CardContent>
+			</Card>
 		</div>
 	);
 }
@@ -1153,6 +1315,14 @@ function formatQty(value: number) {
 function formatSigned(value: number) {
 	const formatted = formatQty(value);
 	return value > 0 ? `+${formatted}` : formatted;
+}
+
+function formatMoney(value: number) {
+	return new Intl.NumberFormat("es-MX", {
+		style: "currency",
+		currency: "MXN",
+		maximumFractionDigits: 0,
+	}).format(value / 100);
 }
 
 function formatInventoryQty(
