@@ -17,10 +17,19 @@ function resolveDataDir() {
   if (process.env.PGLITE_DATA_DIR) return process.env.PGLITE_DATA_DIR;
   if (!process.env.VERCEL) return "./data/pglite";
 
-  const target = "/tmp/antropos-demo-pglite";
-  const bundledSeed = join(process.cwd(), "demo-data", "pglite");
+  const deploymentKey =
+    process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 12) ??
+    process.env.VERCEL_DEPLOYMENT_ID ??
+    "current";
+  const target = `/tmp/antropos-demo-pglite-${deploymentKey}`;
+  const bundledSeedCandidates = [
+    join(process.cwd(), "demo-data", "pglite"),
+    join(process.cwd(), "apps", "web", "demo-data", "pglite"),
+    join(process.cwd(), ".next", "standalone", "apps", "web", "demo-data", "pglite"),
+  ];
+  const bundledSeed = bundledSeedCandidates.find((path) => existsSync(path));
 
-  if (!existsSync(target) && existsSync(bundledSeed)) {
+  if (!existsSync(target) && bundledSeed) {
     mkdirSync("/tmp", { recursive: true });
     cpSync(bundledSeed, target, { recursive: true });
   }
