@@ -12,8 +12,10 @@ export async function proxy(request: NextRequest) {
 		!pathname.startsWith("/login") &&
 		!pathname.startsWith("/signup") &&
 		!pathname.startsWith("/menu") &&
+		!pathname.startsWith("/demo-health") &&
 		!pathname.startsWith("/auth") &&
 		!pathname.startsWith("/api/auth") &&
+		!pathname.startsWith("/api/demo-health") &&
 		!pathname.startsWith("/api/docs") &&
 		!pathname.startsWith("/api/openapi.json")
 	) {
