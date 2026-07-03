@@ -323,9 +323,17 @@ export async function seed() {
 	const [demoProductCount] = await db
 		.select({ count: sql<number>`count(*)` })
 		.from(products)
-		.where(sql`${products.name} = ${DEMO_PRODUCTS[0].name}`);
+		.where(sql`${products.user_uid} = ${demoUser?.id ?? ""}`);
+	const [demoOrderCount] = await db
+		.select({ count: sql<number>`count(*)` })
+		.from(orders)
+		.where(sql`${orders.user_uid} = ${demoUser?.id ?? ""}`);
 
-	if (demoUser && Number(demoProductCount.count) > 0) {
+	if (
+		demoUser &&
+		Number(demoProductCount.count) >= DEMO_PRODUCTS.length &&
+		Number(demoOrderCount.count) >= 20
+	) {
 		await ensureDemoRecipes(demoUser.id);
 		return;
 	}
@@ -334,7 +342,7 @@ export async function seed() {
 		.select({ count: sql<number>`count(*)` })
 		.from(paymentMethods);
 
-	if (existing[0].count > 0) {
+	if (demoUser || existing[0].count > 0) {
 		await db.execute(sql.raw(`
 			TRUNCATE TABLE
 				ingredient_counts,
