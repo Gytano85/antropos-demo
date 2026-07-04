@@ -19,7 +19,9 @@ export async function login(formData: FormData) {
     }
 
     const { seed } = await import("@/lib/db/seed");
-    await seed();
+    await seed().catch((error) => {
+      console.warn("Demo seed skipped during login:", error);
+    });
 
     const cookieStore = await cookies();
     cookieStore.set(DEMO_COOKIE, "1", {
