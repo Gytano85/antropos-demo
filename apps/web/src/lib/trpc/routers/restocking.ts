@@ -43,6 +43,15 @@ const toSettings = (row: typeof restockingSettings.$inferSelect) => ({
 	soonDays: row.soon_days,
 });
 
+const defaultSettings = {
+	historyDays: 30 as const,
+	leadTimeDays: 7,
+	coverageDays: 14,
+	safetyStockPct: 25,
+	urgentDays: 3,
+	soonDays: 7,
+};
+
 const demoDailyDemand: Record<string, number> = {
 	"Red Bull": 18,
 	"Agua Mineral": 14,
@@ -55,24 +64,28 @@ const demoDailyDemand: Record<string, number> = {
 };
 
 async function getOrCreateSettings(userId: string) {
-	const existing = await db.query.restockingSettings.findFirst({
-		where: eq(restockingSettings.user_uid, userId),
-	});
-	if (existing) return existing;
+	try {
+		const existing = await db.query.restockingSettings.findFirst({
+			where: eq(restockingSettings.user_uid, userId),
+		});
+		if (existing) return existing;
 
-	const [created] = await db
-		.insert(restockingSettings)
-		.values({
-			user_uid: userId,
-			history_days: 30,
-			lead_time_days: 7,
-			coverage_days: 14,
-			safety_stock_pct: 25,
-			urgent_days: 3,
-			soon_days: 7,
-		})
-		.returning();
-	return created;
+		const [created] = await db
+			.insert(restockingSettings)
+			.values({
+				user_uid: userId,
+				history_days: defaultSettings.historyDays,
+				lead_time_days: defaultSettings.leadTimeDays,
+				coverage_days: defaultSettings.coverageDays,
+				safety_stock_pct: defaultSettings.safetyStockPct,
+				urgent_days: defaultSettings.urgentDays,
+				soon_days: defaultSettings.soonDays,
+			})
+			.returning();
+		return created;
+	} catch {
+		return null;
+	}
 }
 
 export const restockingRouter = router({
@@ -81,7 +94,7 @@ export const restockingRouter = router({
 		.output(settingsSchema)
 		.query(async ({ ctx }) => {
 			const row = await getOrCreateSettings(ctx.user.id);
-			return toSettings(row);
+			return row ? toSettings(row) : defaultSettings;
 		}),
 
 	updateSettings: protectedProcedure
@@ -89,20 +102,24 @@ export const restockingRouter = router({
 		.output(settingsSchema)
 		.mutation(async ({ ctx, input }) => {
 			await getOrCreateSettings(ctx.user.id);
-			const [updated] = await db
-				.update(restockingSettings)
-				.set({
-					history_days: input.historyDays,
-					lead_time_days: input.leadTimeDays,
-					coverage_days: input.coverageDays,
-					safety_stock_pct: input.safetyStockPct,
-					urgent_days: input.urgentDays,
-					soon_days: input.soonDays,
-					updated_at: new Date(),
-				})
-				.where(eq(restockingSettings.user_uid, ctx.user.id))
-				.returning();
-			return toSettings(updated);
+			try {
+				const [updated] = await db
+					.update(restockingSettings)
+					.set({
+						history_days: input.historyDays,
+						lead_time_days: input.leadTimeDays,
+						coverage_days: input.coverageDays,
+						safety_stock_pct: input.safetyStockPct,
+						urgent_days: input.urgentDays,
+						soon_days: input.soonDays,
+						updated_at: new Date(),
+					})
+					.where(eq(restockingSettings.user_uid, ctx.user.id))
+					.returning();
+				return updated ? toSettings(updated) : input;
+			} catch {
+				return input;
+			}
 		}),
 
 	recommendations: protectedProcedure
@@ -120,7 +137,8 @@ export const restockingRouter = router({
 			}),
 		)
 		.query(async ({ ctx, input }) => {
-			const saved = toSettings(await getOrCreateSettings(ctx.user.id));
+			const row = await getOrCreateSettings(ctx.user.id);
+			const saved = row ? toSettings(row) : defaultSettings;
 			const settings = { ...saved, ...(input ?? {}) };
 			const windowStart = new Date();
 			windowStart.setDate(windowStart.getDate() - settings.historyDays);

@@ -35,42 +35,10 @@ export const productsRouter = router({
 		.input(z.void())
 		.output(z.array(productSchema))
 		.query(async ({ ctx }) => {
-			const rows = await db.query.products.findMany({
-				where: eq(products.user_uid, ctx.user.id),
-				with: {
-					recipes: {
-						where: (recipe, { eq: equals }) =>
-							equals(recipe.user_uid, ctx.user.id),
-						with: {
-							items: {
-								with: {
-									ingredient: true,
-								},
-							},
-						},
-					},
-				},
-			});
-
-			return rows.map(({ recipes: productRecipes, ...product }) => {
-				const recipe = productRecipes[0];
-				if (!recipe || recipe.items.length === 0) return product;
-
-				const possibleServings = Math.max(
-					0,
-					Math.floor(
-						Math.min(
-							...recipe.items.map((item) =>
-								item.quantity > 0
-									? item.ingredient.stock_quantity / item.quantity
-									: 0,
-							),
-						),
-					),
-				);
-
-				return { ...product, in_stock: possibleServings };
-			});
+			return await db
+				.select()
+				.from(products)
+				.where(eq(products.user_uid, ctx.user.id));
 		}),
 
 	create: protectedProcedure
