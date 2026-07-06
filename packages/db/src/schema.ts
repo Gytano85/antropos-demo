@@ -88,6 +88,105 @@ export const restockingSettings = pgTable("restocking_settings", {
 });
 
 // ── Customers ───────────────────────────────────────────────────────────────
+export const attendanceSettings = pgTable("attendance_settings", {
+	id: serial("id").primaryKey(),
+	user_uid: varchar("user_uid", { length: 255 }).notNull().unique(),
+	location_name: varchar("location_name", { length: 120 }).notNull().default("Antro"),
+	latitude: real("latitude"),
+	longitude: real("longitude"),
+	allowed_radius_meters: integer("allowed_radius_meters").notNull().default(100),
+	require_location: boolean("require_location").notNull().default(false),
+	require_pin: boolean("require_pin").notNull().default(true),
+	qr_ttl_seconds: integer("qr_ttl_seconds").notNull().default(60),
+	created_at: timestamp("created_at").defaultNow(),
+	updated_at: timestamp("updated_at").defaultNow(),
+});
+
+export const employees = pgTable("employees", {
+	id: serial("id").primaryKey(),
+	user_uid: varchar("user_uid", { length: 255 }).notNull(),
+	name: varchar("name", { length: 255 }).notNull(),
+	phone: varchar("phone", { length: 30 }),
+	role: varchar("role", { length: 80 }).notNull(),
+	pin_hash: varchar("pin_hash", { length: 128 }).notNull(),
+	status: varchar("status", { length: 20 }).notNull().default("active"),
+	created_at: timestamp("created_at").defaultNow(),
+	updated_at: timestamp("updated_at").defaultNow(),
+});
+
+export const employeeShifts = pgTable("employee_shifts", {
+	id: serial("id").primaryKey(),
+	user_uid: varchar("user_uid", { length: 255 }).notNull(),
+	name: varchar("name", { length: 120 }).notNull(),
+	start_time: varchar("start_time", { length: 5 }).notNull(),
+	end_time: varchar("end_time", { length: 5 }).notNull(),
+	grace_minutes: integer("grace_minutes").notNull().default(10),
+	early_checkin_minutes: integer("early_checkin_minutes").notNull().default(30),
+	late_absence_minutes: integer("late_absence_minutes").notNull().default(90),
+	active_days: varchar("active_days", { length: 30 }).notNull().default("0,1,2,3,4,5,6"),
+	created_at: timestamp("created_at").defaultNow(),
+	updated_at: timestamp("updated_at").defaultNow(),
+});
+
+export const employeeShiftAssignments = pgTable("employee_shift_assignments", {
+	id: serial("id").primaryKey(),
+	user_uid: varchar("user_uid", { length: 255 }).notNull(),
+	employee_id: integer("employee_id").references(() => employees.id).notNull(),
+	shift_id: integer("shift_id").references(() => employeeShifts.id).notNull(),
+	shift_date: varchar("shift_date", { length: 10 }).notNull(),
+	expected_start_at: timestamp("expected_start_at").notNull(),
+	expected_end_at: timestamp("expected_end_at").notNull(),
+	created_at: timestamp("created_at").defaultNow(),
+});
+
+export const attendanceQrTokens = pgTable("attendance_qr_tokens", {
+	id: serial("id").primaryKey(),
+	user_uid: varchar("user_uid", { length: 255 }).notNull(),
+	token_hash: varchar("token_hash", { length: 128 }).notNull().unique(),
+	purpose: varchar("purpose", { length: 20 }).notNull(),
+	shift_id: integer("shift_id").references(() => employeeShifts.id),
+	valid_from: timestamp("valid_from").notNull(),
+	expires_at: timestamp("expires_at").notNull(),
+	created_at: timestamp("created_at").defaultNow(),
+});
+
+export const attendanceRecords = pgTable("attendance_records", {
+	id: serial("id").primaryKey(),
+	user_uid: varchar("user_uid", { length: 255 }).notNull(),
+	employee_id: integer("employee_id").references(() => employees.id).notNull(),
+	shift_assignment_id: integer("shift_assignment_id").references(() => employeeShiftAssignments.id),
+	check_in_at: timestamp("check_in_at"),
+	check_out_at: timestamp("check_out_at"),
+	check_in_status: varchar("check_in_status", { length: 40 }),
+	check_out_status: varchar("check_out_status", { length: 40 }),
+	minutes_late: integer("minutes_late").notNull().default(0),
+	minutes_early_leave: integer("minutes_early_leave").notNull().default(0),
+	overtime_minutes: integer("overtime_minutes").notNull().default(0),
+	qr_token_id: integer("qr_token_id").references(() => attendanceQrTokens.id),
+	device_fingerprint: text(),
+	latitude: real("latitude"),
+	longitude: real("longitude"),
+	distance_meters: integer("distance_meters"),
+	manager_note: text(),
+	created_at: timestamp("created_at").defaultNow(),
+	updated_at: timestamp("updated_at").defaultNow(),
+});
+
+export const attendanceAttempts = pgTable("attendance_attempts", {
+	id: serial("id").primaryKey(),
+	user_uid: varchar("user_uid", { length: 255 }),
+	employee_id: integer("employee_id").references(() => employees.id),
+	token_hash: varchar("token_hash", { length: 128 }),
+	purpose: varchar("purpose", { length: 20 }),
+	result: varchar("result", { length: 40 }).notNull(),
+	reason: text(),
+	latitude: real("latitude"),
+	longitude: real("longitude"),
+	distance_meters: integer("distance_meters"),
+	device_fingerprint: text(),
+	created_at: timestamp("created_at").defaultNow(),
+});
+
 export const customers = pgTable("customers", {
 	id: serial("id").primaryKey(),
 	name: varchar("name", { length: 255 }).notNull(),

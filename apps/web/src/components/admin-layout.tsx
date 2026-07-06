@@ -10,6 +10,7 @@ import {
 import {
 	BookOpenIcon,
 	BrainCircuitIcon,
+	CalendarCheckIcon,
 	CreditCardIcon,
 	DollarSignIcon,
 	LayoutDashboardIcon,
@@ -46,13 +47,15 @@ interface NavItem {
 		| "settings"
 		| "tables"
 		| "menuEngine"
-		| "digitalMenu";
+		| "digitalMenu"
+		| "attendance";
 	icon: LucideIcon;
 }
 
 const navItems: NavItem[] = [
 	{ href: "/admin", labelKey: "dashboard", icon: LayoutDashboardIcon },
 	{ href: "/admin/tables", labelKey: "tables", icon: UtensilsIcon },
+	{ href: "/admin/attendance", labelKey: "attendance", icon: CalendarCheckIcon },
 	{ href: "/menu", labelKey: "digitalMenu", icon: BookOpenIcon },
 	{ href: "/admin/menu-engine", labelKey: "menuEngine", icon: BrainCircuitIcon },
 	{ href: "/admin/cashier", labelKey: "cashier", icon: DollarSignIcon },

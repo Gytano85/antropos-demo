@@ -43,6 +43,7 @@ const messages: Messages = {
 	nav: {
 		dashboard: "Panel",
 		tables: "Comandas",
+		attendance: "Asistencia",
 		digitalMenu: "Menú digital",
 		menuEngine: "Motor del menú",
 		cashier: "Caja",

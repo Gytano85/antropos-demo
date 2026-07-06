@@ -41,6 +41,7 @@ const messages = {
 	nav: {
 		dashboard: "Dashboard",
 		tables: "Tables",
+		attendance: "Attendance",
 		digitalMenu: "Digital menu",
 		menuEngine: "Menu engine",
 		cashier: "Cashier",
