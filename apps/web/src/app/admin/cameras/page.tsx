@@ -93,8 +93,8 @@ export default function CamerasPage() {
 	const [draft, setDraft] = useState({
 		name: "",
 		location: "",
-		modelId: "tiny-person-detection-stwdp/6",
-		confidenceThreshold: 0.55,
+		modelId: "security-camera-with-person/1",
+		confidenceThreshold: 0.25,
 		checkIntervalSeconds: 8,
 		noPersonTimeoutSeconds: 180,
 		status: "active" as "active" | "inactive",

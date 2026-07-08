@@ -67,9 +67,14 @@ export async function POST(request: Request) {
 		}
 
 		const result = (await response.json()) as { predictions?: RoboflowPrediction[] };
-		const people = (result.predictions ?? []).filter((prediction) =>
+		const predictions = result.predictions ?? [];
+		const peopleByClass = predictions.filter((prediction) =>
 			isPersonClass(prediction.class),
 		);
+		const people =
+			peopleByClass.length > 0 || !isSingleClassPersonModel(modelId)
+				? peopleByClass
+				: predictions;
 		const confidenceAvg =
 			people.length > 0
 				? people.reduce((sum, item) => sum + Number(item.confidence ?? 0), 0) /
@@ -110,6 +115,15 @@ function isPersonClass(value?: string) {
 		normalized.includes("person") ||
 		normalized.includes("people") ||
 		normalized.includes("human") ||
+		normalized.includes("pedestrian")
+	);
+}
+
+function isSingleClassPersonModel(modelId: string) {
+	const normalized = modelId.toLowerCase();
+	return (
+		normalized.includes("person") ||
+		normalized.includes("people") ||
 		normalized.includes("pedestrian")
 	);
 }

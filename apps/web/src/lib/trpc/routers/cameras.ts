@@ -41,8 +41,8 @@ export async function ensureCameraTables() {
 			name varchar(120) NOT NULL,
 			location varchar(120) NOT NULL DEFAULT 'Entrada',
 			source_type varchar(30) NOT NULL DEFAULT 'webcam',
-			model_id varchar(160) NOT NULL DEFAULT 'tiny-person-detection-stwdp/6',
-			confidence_threshold real NOT NULL DEFAULT 0.55,
+			model_id varchar(160) NOT NULL DEFAULT 'security-camera-with-person/1',
+			confidence_threshold real NOT NULL DEFAULT 0.25,
 			check_interval_seconds integer NOT NULL DEFAULT 10,
 			no_person_timeout_seconds integer NOT NULL DEFAULT 180,
 			status varchar(30) NOT NULL DEFAULT 'active',
@@ -84,15 +84,25 @@ async function ensureCameraDemo(userId: string) {
 		.from(cameraDevices)
 		.where(eq(cameraDevices.user_uid, userId));
 
-	if (Number(existing[0]?.count ?? 0) > 0) return;
+	if (Number(existing[0]?.count ?? 0) > 0) {
+		await db
+			.update(cameraDevices)
+			.set({
+				model_id: "security-camera-with-person/1",
+				confidence_threshold: 0.25,
+				updated_at: new Date(),
+			})
+			.where(sql`${cameraDevices.user_uid} = ${userId} AND ${cameraDevices.model_id} = 'tiny-person-detection-stwdp/6'`);
+		return;
+	}
 
 	await db.insert(cameraDevices).values({
 		user_uid: userId,
 		name: "Webcam entrada principal",
 		location: "Entrada principal",
 		source_type: "webcam",
-		model_id: "tiny-person-detection-stwdp/6",
-		confidence_threshold: 0.55,
+		model_id: "security-camera-with-person/1",
+		confidence_threshold: 0.25,
 		check_interval_seconds: 8,
 		no_person_timeout_seconds: 180,
 		status: "active",
