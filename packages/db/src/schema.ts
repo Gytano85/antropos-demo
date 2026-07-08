@@ -196,8 +196,8 @@ export const cameraDevices = pgTable("camera_devices", {
 	model_id: varchar("model_id", { length: 160 })
 		.notNull()
 		.default("security-camera-with-person/1"),
-	confidence_threshold: real("confidence_threshold").notNull().default(0.25),
-	check_interval_seconds: integer("check_interval_seconds").notNull().default(10),
+	confidence_threshold: real("confidence_threshold").notNull().default(0.12),
+	check_interval_seconds: integer("check_interval_seconds").notNull().default(3),
 	no_person_timeout_seconds: integer("no_person_timeout_seconds")
 		.notNull()
 		.default(180),

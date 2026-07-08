@@ -14,7 +14,7 @@ const cameraInput = z.object({
 	name: z.string().min(1).max(120),
 	location: z.string().min(1).max(120),
 	modelId: z.string().min(3).max(160),
-	confidenceThreshold: z.number().min(0.1).max(0.95),
+	confidenceThreshold: z.number().min(0.05).max(0.95),
 	checkIntervalSeconds: z.number().int().min(3).max(120),
 	noPersonTimeoutSeconds: z.number().int().min(30).max(1800),
 	status: z.enum(["active", "inactive"]),
@@ -42,8 +42,8 @@ export async function ensureCameraTables() {
 			location varchar(120) NOT NULL DEFAULT 'Entrada',
 			source_type varchar(30) NOT NULL DEFAULT 'webcam',
 			model_id varchar(160) NOT NULL DEFAULT 'security-camera-with-person/1',
-			confidence_threshold real NOT NULL DEFAULT 0.25,
-			check_interval_seconds integer NOT NULL DEFAULT 10,
+			confidence_threshold real NOT NULL DEFAULT 0.12,
+			check_interval_seconds integer NOT NULL DEFAULT 3,
 			no_person_timeout_seconds integer NOT NULL DEFAULT 180,
 			status varchar(30) NOT NULL DEFAULT 'active',
 			last_seen_at timestamp,
@@ -89,10 +89,11 @@ async function ensureCameraDemo(userId: string) {
 			.update(cameraDevices)
 			.set({
 				model_id: "security-camera-with-person/1",
-				confidence_threshold: 0.25,
+				confidence_threshold: 0.12,
+				check_interval_seconds: 3,
 				updated_at: new Date(),
 			})
-			.where(sql`${cameraDevices.user_uid} = ${userId} AND ${cameraDevices.model_id} = 'tiny-person-detection-stwdp/6'`);
+			.where(sql`${cameraDevices.user_uid} = ${userId} AND (${cameraDevices.model_id} = 'tiny-person-detection-stwdp/6' OR ${cameraDevices.confidence_threshold} > 0.12)`);
 		return;
 	}
 
@@ -102,8 +103,8 @@ async function ensureCameraDemo(userId: string) {
 		location: "Entrada principal",
 		source_type: "webcam",
 		model_id: "security-camera-with-person/1",
-		confidence_threshold: 0.25,
-		check_interval_seconds: 8,
+		confidence_threshold: 0.12,
+		check_interval_seconds: 3,
 		no_person_timeout_seconds: 180,
 		status: "active",
 	});

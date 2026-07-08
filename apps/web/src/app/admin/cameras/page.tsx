@@ -89,13 +89,20 @@ export default function CamerasPage() {
 	const [running, setRunning] = useState(false);
 	const [cameraError, setCameraError] = useState<string | null>(null);
 	const [detection, setDetection] = useState<DetectionResult | null>(null);
+	const [stablePresence, setStablePresence] = useState({
+		personCount: 0,
+		rawPersonCount: 0,
+		lastPositiveAt: null as number | null,
+		updatedAt: null as number | null,
+	});
+	const stablePresenceRef = useRef(stablePresence);
 	const [busy, setBusy] = useState(false);
 	const [draft, setDraft] = useState({
 		name: "",
 		location: "",
 		modelId: "security-camera-with-person/1",
-		confidenceThreshold: 0.25,
-		checkIntervalSeconds: 8,
+		confidenceThreshold: 0.12,
+		checkIntervalSeconds: 3,
 		noPersonTimeoutSeconds: 180,
 		status: "active" as "active" | "inactive",
 	});
@@ -183,6 +190,30 @@ export default function CamerasPage() {
 		}
 	};
 
+	const stabilizePresence = useCallback((rawPersonCount: number) => {
+		const now = Date.now();
+		const holdMs = 25_000;
+		const current = stablePresenceRef.current;
+		const lastPositiveAt = rawPersonCount > 0 ? now : current.lastPositiveAt;
+		const recentPositive =
+			lastPositiveAt !== null && now - lastPositiveAt <= holdMs;
+		const personCount =
+			rawPersonCount > 0
+				? rawPersonCount
+				: recentPositive
+					? Math.max(current.personCount, 1)
+					: 0;
+		const next = {
+			personCount,
+			rawPersonCount,
+			lastPositiveAt,
+			updatedAt: now,
+		};
+		stablePresenceRef.current = next;
+		setStablePresence(next);
+		return next;
+	}, []);
+
 	const detectOnce = useCallback(async () => {
 		if (!selected || !videoRef.current || !canvasRef.current || busy) return;
 		const video = videoRef.current;
@@ -196,7 +227,7 @@ export default function CamerasPage() {
 			const context = canvas.getContext("2d");
 			if (!context) return;
 			context.drawImage(video, 0, 0, canvas.width, canvas.height);
-			const imageDataUrl = canvas.toDataURL("image/jpeg", 0.72);
+			const imageDataUrl = canvas.toDataURL("image/jpeg", 0.9);
 
 			if (!data?.inferenceConfigured && window.FaceDetector) {
 				const detector = new window.FaceDetector({
@@ -204,19 +235,23 @@ export default function CamerasPage() {
 					maxDetectedFaces: 20,
 				});
 				const faces = await detector.detect(canvas);
+				const stable = stabilizePresence(faces.length);
 				const result: DetectionResult = {
 					configured: true,
-					personCount: faces.length,
+					personCount: stable.personCount,
 					confidenceAvg: faces.length > 0 ? 0.8 : null,
-					message: "Deteccion local por rostro. Para cuerpo completo usa Roboflow.",
+					message:
+						stable.personCount > 0 && faces.length === 0
+							? "Presencia mantenida por lectura reciente para evitar parpadeos."
+							: "Deteccion local por rostro. Para cuerpo completo usa Roboflow.",
 					predictions: [],
 				};
 				setDetection(result);
 				recordObservation.mutate({
 					cameraId: selected.id,
-					personCount: result.personCount,
+					personCount: stable.personCount,
 					confidenceAvg: result.confidenceAvg,
-					status: result.personCount > 0 ? "person_detected" : "empty",
+					status: stable.personCount > 0 ? "person_detected" : "empty",
 				});
 				return;
 			}
@@ -231,15 +266,25 @@ export default function CamerasPage() {
 				}),
 			});
 			const result = (await response.json()) as DetectionResult;
-			setDetection(result);
+			const rawPersonCount = result.personCount ?? 0;
+			const stable = stabilizePresence(rawPersonCount);
+			const stabilizedResult = {
+				...result,
+				personCount: stable.personCount,
+				message:
+					stable.personCount > 0 && rawPersonCount === 0
+						? "Presencia mantenida por lectura reciente para evitar parpadeos."
+						: result.message,
+			};
+			setDetection(stabilizedResult);
 
 			recordObservation.mutate({
 				cameraId: selected.id,
-				personCount: result.personCount ?? 0,
+				personCount: stable.personCount,
 				confidenceAvg: result.confidenceAvg ?? null,
 				status: !result.configured
 					? "model_not_configured"
-					: response.ok && (result.personCount ?? 0) > 0
+					: response.ok && stable.personCount > 0
 						? "person_detected"
 						: response.ok
 							? "empty"
@@ -263,7 +308,7 @@ export default function CamerasPage() {
 		} finally {
 			setBusy(false);
 		}
-	}, [busy, data?.inferenceConfigured, recordObservation, selected]);
+	}, [busy, data?.inferenceConfigured, recordObservation, selected, stabilizePresence]);
 
 	useEffect(() => {
 		if (!running || !selected) return;
@@ -311,7 +356,7 @@ export default function CamerasPage() {
 				<Metric
 					icon={UsersIcon}
 					label="Personas ahora"
-					value={selected?.lastPersonCount ?? detection?.personCount ?? 0}
+					value={stablePresence.personCount || selected?.lastPersonCount || detection?.personCount || 0}
 				/>
 				<Metric icon={ShieldAlertIcon} label="Alertas abiertas" value={openAlerts.length} />
 				<Metric
@@ -365,6 +410,7 @@ export default function CamerasPage() {
 							result={detection}
 							busy={busy}
 							inferenceConfigured={Boolean(data?.inferenceConfigured)}
+							stablePresence={stablePresence}
 						/>
 					</CardContent>
 				</Card>
@@ -417,8 +463,8 @@ export default function CamerasPage() {
 								<LabeledInput
 									label="Confianza"
 									type="number"
-									step="0.05"
-									min="0.1"
+									step="0.01"
+									min="0.05"
 									max="0.95"
 									value={String(draft.confidenceThreshold)}
 									onChange={(value) =>
@@ -605,10 +651,17 @@ function DetectionStatus({
 	result,
 	busy,
 	inferenceConfigured,
+	stablePresence,
 }: {
 	result: DetectionResult | null;
 	busy: boolean;
 	inferenceConfigured: boolean;
+	stablePresence: {
+		personCount: number;
+		rawPersonCount: number;
+		lastPositiveAt: number | null;
+		updatedAt: number | null;
+	};
 }) {
 	if (busy) {
 		return (
@@ -676,6 +729,16 @@ function DetectionStatus({
 			{result.message && (
 				<div className="mt-1 text-muted-foreground text-xs">{result.message}</div>
 			)}
+			<div className="mt-2 grid gap-2 text-muted-foreground text-xs sm:grid-cols-3">
+				<div>Frame actual: {stablePresence.rawPersonCount}</div>
+				<div>Presencia estable: {stablePresence.personCount}</div>
+				<div>
+					Ultimo positivo:{" "}
+					{stablePresence.lastPositiveAt
+						? new Date(stablePresence.lastPositiveAt).toLocaleTimeString()
+						: "-"}
+				</div>
+			</div>
 		</div>
 	);
 }
