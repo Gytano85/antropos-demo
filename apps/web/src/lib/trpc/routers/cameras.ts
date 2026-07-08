@@ -93,7 +93,7 @@ async function ensureCameraDemo(userId: string) {
 				check_interval_seconds: 3,
 				updated_at: new Date(),
 			})
-			.where(sql`${cameraDevices.user_uid} = ${userId} AND (${cameraDevices.model_id} = 'tiny-person-detection-stwdp/6' OR ${cameraDevices.confidence_threshold} > 0.12)`);
+			.where(sql`${cameraDevices.user_uid} = ${userId} AND ${cameraDevices.model_id} = 'tiny-person-detection-stwdp/6'`);
 		return;
 	}
 

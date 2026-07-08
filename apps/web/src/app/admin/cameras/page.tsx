@@ -192,17 +192,9 @@ export default function CamerasPage() {
 
 	const stabilizePresence = useCallback((rawPersonCount: number) => {
 		const now = Date.now();
-		const holdMs = 25_000;
 		const current = stablePresenceRef.current;
 		const lastPositiveAt = rawPersonCount > 0 ? now : current.lastPositiveAt;
-		const recentPositive =
-			lastPositiveAt !== null && now - lastPositiveAt <= holdMs;
-		const personCount =
-			rawPersonCount > 0
-				? rawPersonCount
-				: recentPositive
-					? Math.max(current.personCount, 1)
-					: 0;
+		const personCount = rawPersonCount;
 		const next = {
 			personCount,
 			rawPersonCount,
@@ -229,7 +221,7 @@ export default function CamerasPage() {
 			context.drawImage(video, 0, 0, canvas.width, canvas.height);
 			const imageDataUrl = canvas.toDataURL("image/jpeg", 0.9);
 
-			if (!data?.inferenceConfigured && window.FaceDetector) {
+			if (window.FaceDetector) {
 				const detector = new window.FaceDetector({
 					fastMode: true,
 					maxDetectedFaces: 20,
@@ -241,9 +233,7 @@ export default function CamerasPage() {
 					personCount: stable.personCount,
 					confidenceAvg: faces.length > 0 ? 0.8 : null,
 					message:
-						stable.personCount > 0 && faces.length === 0
-							? "Presencia mantenida por lectura reciente para evitar parpadeos."
-							: "Deteccion local por rostro. Para cuerpo completo usa Roboflow.",
+						"Deteccion local por rostro para webcam frontal. Si quieres camara lejana, usa Roboflow.",
 					predictions: [],
 				};
 				setDetection(result);
@@ -731,7 +721,7 @@ function DetectionStatus({
 			)}
 			<div className="mt-2 grid gap-2 text-muted-foreground text-xs sm:grid-cols-3">
 				<div>Frame actual: {stablePresence.rawPersonCount}</div>
-				<div>Presencia estable: {stablePresence.personCount}</div>
+				<div>Lectura usada: {stablePresence.personCount}</div>
 				<div>
 					Ultimo positivo:{" "}
 					{stablePresence.lastPositiveAt
