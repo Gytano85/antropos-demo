@@ -96,6 +96,7 @@ export default function CamerasPage() {
 		updatedAt: null as number | null,
 	});
 	const stablePresenceRef = useRef(stablePresence);
+	const presenceSamplesRef = useRef<Array<{ count: number; time: number }>>([]);
 	const [busy, setBusy] = useState(false);
 	const [draft, setDraft] = useState({
 		name: "",
@@ -192,9 +193,25 @@ export default function CamerasPage() {
 
 	const stabilizePresence = useCallback((rawPersonCount: number) => {
 		const now = Date.now();
+		const holdMs = 5_000;
 		const current = stablePresenceRef.current;
+		presenceSamplesRef.current = [
+			...presenceSamplesRef.current.filter((sample) => now - sample.time <= holdMs),
+			{ count: rawPersonCount, time: now },
+		];
+		const positiveSamples = presenceSamplesRef.current.filter(
+			(sample) => sample.count > 0,
+		);
 		const lastPositiveAt = rawPersonCount > 0 ? now : current.lastPositiveAt;
-		const personCount = rawPersonCount;
+		const positiveMode = getConservativeMode(
+			positiveSamples.map((sample) => sample.count),
+		);
+		const personCount =
+			positiveMode > 0
+				? positiveMode
+				: lastPositiveAt !== null && now - lastPositiveAt <= holdMs
+					? current.personCount
+					: 0;
 		const next = {
 			personCount,
 			rawPersonCount,
@@ -233,7 +250,7 @@ export default function CamerasPage() {
 					personCount: stable.personCount,
 					confidenceAvg: faces.length > 0 ? 0.8 : null,
 					message:
-						"Deteccion local por rostro para webcam frontal. Si quieres camara lejana, usa Roboflow.",
+						"Deteccion local por rostro con suavizado de 5 segundos para webcam frontal.",
 					predictions: [],
 				};
 				setDetection(result);
@@ -263,7 +280,7 @@ export default function CamerasPage() {
 				personCount: stable.personCount,
 				message:
 					stable.personCount > 0 && rawPersonCount === 0
-						? "Presencia mantenida por lectura reciente para evitar parpadeos."
+						? "Presencia mantenida por lectura reciente durante maximo 5 segundos."
 						: result.message,
 			};
 			setDetection(stabilizedResult);
@@ -742,4 +759,21 @@ function readableStatus(status: string) {
 		model_not_configured: "Sin modelo",
 	};
 	return labels[status] ?? status;
+}
+
+function getConservativeMode(values: number[]) {
+	if (values.length === 0) return 0;
+	const counts = new Map<number, number>();
+	for (const value of values) {
+		counts.set(value, (counts.get(value) ?? 0) + 1);
+	}
+	let bestValue = values[0] ?? 0;
+	let bestCount = 0;
+	for (const [value, count] of counts) {
+		if (count > bestCount || (count === bestCount && value < bestValue)) {
+			bestValue = value;
+			bestCount = count;
+		}
+	}
+	return bestValue;
 }
