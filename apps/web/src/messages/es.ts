@@ -44,6 +44,7 @@ const messages: Messages = {
 		dashboard: "Panel",
 		tables: "Comandas",
 		attendance: "Asistencia",
+		cameras: "Cámaras",
 		digitalMenu: "Menú digital",
 		menuEngine: "Motor del menú",
 		cashier: "Caja",

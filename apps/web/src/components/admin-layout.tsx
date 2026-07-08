@@ -11,6 +11,7 @@ import {
 	BookOpenIcon,
 	BrainCircuitIcon,
 	CalendarCheckIcon,
+	CameraIcon,
 	CreditCardIcon,
 	DollarSignIcon,
 	LayoutDashboardIcon,
@@ -48,7 +49,8 @@ interface NavItem {
 		| "tables"
 		| "menuEngine"
 		| "digitalMenu"
-		| "attendance";
+		| "attendance"
+		| "cameras";
 	icon: LucideIcon;
 }
 
@@ -56,6 +58,7 @@ const navItems: NavItem[] = [
 	{ href: "/admin", labelKey: "dashboard", icon: LayoutDashboardIcon },
 	{ href: "/admin/tables", labelKey: "tables", icon: UtensilsIcon },
 	{ href: "/admin/attendance", labelKey: "attendance", icon: CalendarCheckIcon },
+	{ href: "/admin/cameras", labelKey: "cameras", icon: CameraIcon },
 	{ href: "/menu", labelKey: "digitalMenu", icon: BookOpenIcon },
 	{ href: "/admin/menu-engine", labelKey: "menuEngine", icon: BrainCircuitIcon },
 	{ href: "/admin/cashier", labelKey: "cashier", icon: DollarSignIcon },

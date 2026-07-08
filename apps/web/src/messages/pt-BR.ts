@@ -44,6 +44,7 @@ const messages: Messages = {
 		dashboard: "Painel",
 		tables: "Mesas",
 		attendance: "Ponto",
+		cameras: "Câmeras",
 		digitalMenu: "Cardápio digital",
 		menuEngine: "Motor do cardápio",
 		cashier: "Caixa",

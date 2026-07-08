@@ -187,6 +187,52 @@ export const attendanceAttempts = pgTable("attendance_attempts", {
 	created_at: timestamp("created_at").defaultNow(),
 });
 
+export const cameraDevices = pgTable("camera_devices", {
+	id: serial("id").primaryKey(),
+	user_uid: varchar("user_uid", { length: 255 }).notNull(),
+	name: varchar("name", { length: 120 }).notNull(),
+	location: varchar("location", { length: 120 }).notNull().default("Entrada"),
+	source_type: varchar("source_type", { length: 30 }).notNull().default("webcam"),
+	model_id: varchar("model_id", { length: 160 })
+		.notNull()
+		.default("tiny-person-detection-stwdp/6"),
+	confidence_threshold: real("confidence_threshold").notNull().default(0.55),
+	check_interval_seconds: integer("check_interval_seconds").notNull().default(10),
+	no_person_timeout_seconds: integer("no_person_timeout_seconds")
+		.notNull()
+		.default(180),
+	status: varchar("status", { length: 30 }).notNull().default("active"),
+	last_seen_at: timestamp("last_seen_at"),
+	last_checked_at: timestamp("last_checked_at"),
+	last_person_count: integer("last_person_count").notNull().default(0),
+	created_at: timestamp("created_at").defaultNow(),
+	updated_at: timestamp("updated_at").defaultNow(),
+});
+
+export const cameraPresenceEvents = pgTable("camera_presence_events", {
+	id: serial("id").primaryKey(),
+	user_uid: varchar("user_uid", { length: 255 }).notNull(),
+	camera_id: integer("camera_id").references(() => cameraDevices.id).notNull(),
+	person_count: integer("person_count").notNull().default(0),
+	confidence_avg: real("confidence_avg"),
+	status: varchar("status", { length: 40 }).notNull(),
+	source: varchar("source", { length: 40 }).notNull().default("webcam"),
+	created_at: timestamp("created_at").defaultNow(),
+});
+
+export const cameraAlerts = pgTable("camera_alerts", {
+	id: serial("id").primaryKey(),
+	user_uid: varchar("user_uid", { length: 255 }).notNull(),
+	camera_id: integer("camera_id").references(() => cameraDevices.id).notNull(),
+	type: varchar("type", { length: 60 }).notNull(),
+	message: text("message").notNull(),
+	status: varchar("status", { length: 30 }).notNull().default("open"),
+	started_at: timestamp("started_at").defaultNow(),
+	resolved_at: timestamp("resolved_at"),
+	created_at: timestamp("created_at").defaultNow(),
+	updated_at: timestamp("updated_at").defaultNow(),
+});
+
 export const customers = pgTable("customers", {
 	id: serial("id").primaryKey(),
 	name: varchar("name", { length: 255 }).notNull(),

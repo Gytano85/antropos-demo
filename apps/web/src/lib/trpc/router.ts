@@ -3,6 +3,7 @@ import { router } from "./init";
 import { citiesRouter } from "./routers/cities";
 import { appSettingsRouter } from "./routers/app-settings";
 import { attendanceRouter } from "./routers/attendance";
+import { camerasRouter } from "./routers/cameras";
 import { customersRouter } from "./routers/customers";
 import { dashboardRouter } from "./routers/dashboard";
 import { fiscalRouter } from "./routers/fiscal";
@@ -21,6 +22,7 @@ export const appRouter = router({
 	products: productsRouter,
 	appSettings: appSettingsRouter,
 	attendance: attendanceRouter,
+	cameras: camerasRouter,
 	customers: customersRouter,
 	orders: ordersRouter,
 	transactions: transactionsRouter,

@@ -42,6 +42,7 @@ const messages = {
 		dashboard: "Dashboard",
 		tables: "Tables",
 		attendance: "Attendance",
+		cameras: "Cameras",
 		digitalMenu: "Digital menu",
 		menuEngine: "Menu engine",
 		cashier: "Cashier",
