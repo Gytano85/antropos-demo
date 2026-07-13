@@ -1,0 +1,58 @@
+import { describe, expect, it } from "bun:test";
+import { evaluatePresenceWindow } from "../../../cameras/presence-engine";
+
+describe("camera presence engine", () => {
+	it("keeps presence stable across one missed frame", () => {
+		const previous = evaluatePresenceWindow(
+			[
+				{ time: 0, personCount: 1, confidence: 0.9, source: "model" },
+				{ time: 1000, personCount: 1, confidence: 0.85, source: "model" },
+			],
+			{
+				now: 1000,
+				windowMs: 15_000,
+				holdMs: 5_000,
+				minPositiveRatio: 0.42,
+				minSamples: 2,
+			},
+		);
+
+		const current = evaluatePresenceWindow(
+			[
+				{ time: 0, personCount: 1, confidence: 0.9, source: "model" },
+				{ time: 1000, personCount: 1, confidence: 0.85, source: "model" },
+				{ time: 2000, personCount: 0, confidence: null, source: "none" },
+			],
+			{
+				now: 2000,
+				windowMs: 15_000,
+				holdMs: 5_000,
+				minPositiveRatio: 0.42,
+				minSamples: 2,
+				previous,
+			},
+		);
+
+		expect(current.personCount).toBe(1);
+		expect(current.status).toBe("present");
+	});
+
+	it("does not detect a person from isolated weak motion", () => {
+		const result = evaluatePresenceWindow(
+			[
+				{ time: 0, personCount: 0, source: "motion", motionScore: 0.08 },
+				{ time: 1000, personCount: 0, source: "none" },
+			],
+			{
+				now: 1000,
+				windowMs: 15_000,
+				holdMs: 5_000,
+				minPositiveRatio: 0.42,
+				minSamples: 2,
+			},
+		);
+
+		expect(result.personCount).toBe(0);
+		expect(result.status).toBe("absent");
+	});
+});

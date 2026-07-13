@@ -7,12 +7,14 @@ import {
 	TooltipProvider,
 	TooltipTrigger,
 } from "@finopenpos/ui/components/tooltip";
+import { useQuery } from "@tanstack/react-query";
 import {
 	BookOpenIcon,
 	BrainCircuitIcon,
 	CalendarCheckIcon,
 	CameraIcon,
 	CreditCardIcon,
+	CrosshairIcon,
 	DollarSignIcon,
 	LayoutDashboardIcon,
 	type LucideIcon,
@@ -20,6 +22,7 @@ import {
 	Package2Icon,
 	PackageIcon,
 	ReceiptTextIcon,
+	ScaleIcon,
 	SettingsIcon,
 	ShoppingBagIcon,
 	UsersIcon,
@@ -28,7 +31,6 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useQuery } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { useState } from "react";
 import { LocaleSwitcher } from "@/components/locale-switcher";
@@ -50,6 +52,8 @@ interface NavItem {
 		| "menuEngine"
 		| "digitalMenu"
 		| "attendance"
+		| "alcoholControl"
+		| "visionOps"
 		| "cameras";
 	icon: LucideIcon;
 }
@@ -57,10 +61,24 @@ interface NavItem {
 const navItems: NavItem[] = [
 	{ href: "/admin", labelKey: "dashboard", icon: LayoutDashboardIcon },
 	{ href: "/admin/tables", labelKey: "tables", icon: UtensilsIcon },
-	{ href: "/admin/attendance", labelKey: "attendance", icon: CalendarCheckIcon },
+	{
+		href: "/admin/attendance",
+		labelKey: "attendance",
+		icon: CalendarCheckIcon,
+	},
+	{
+		href: "/admin/alcohol-control",
+		labelKey: "alcoholControl",
+		icon: ScaleIcon,
+	},
 	{ href: "/admin/cameras", labelKey: "cameras", icon: CameraIcon },
+	{ href: "/admin/vision-ops", labelKey: "visionOps", icon: CrosshairIcon },
 	{ href: "/menu", labelKey: "digitalMenu", icon: BookOpenIcon },
-	{ href: "/admin/menu-engine", labelKey: "menuEngine", icon: BrainCircuitIcon },
+	{
+		href: "/admin/menu-engine",
+		labelKey: "menuEngine",
+		icon: BrainCircuitIcon,
+	},
 	{ href: "/admin/cashier", labelKey: "cashier", icon: DollarSignIcon },
 	{ href: "/admin/inventory", labelKey: "inventory", icon: PackageIcon },
 	{ href: "/admin/customers", labelKey: "customers", icon: UsersIcon },
@@ -107,7 +125,10 @@ export function AdminLayout({ children }: { children: React.ReactNode }) {
 						{t(sidebarExpanded ? "closeMenu" : "openMenu")}
 					</span>
 				</Button>
-				<Link href="/admin" className="items-center gap-2 font-semibold text-lg flex">
+				<Link
+					href="/admin"
+					className="flex items-center gap-2 font-semibold text-lg"
+				>
 					<Package2Icon className="h-6 w-6" />
 					<span>{appSettings?.company_title ?? "Antro POS"}</span>
 				</Link>
@@ -149,7 +170,7 @@ export function AdminLayout({ children }: { children: React.ReactNode }) {
 								href={href}
 								onClick={() => setMobileMenuOpen(false)}
 								className={`flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors ${
-										pathname === href || pathname.startsWith(`${href}/`)
+									pathname === href || pathname.startsWith(`${href}/`)
 										? "bg-accent font-medium text-accent-foreground"
 										: "text-muted-foreground hover:bg-muted hover:text-foreground"
 								}`}

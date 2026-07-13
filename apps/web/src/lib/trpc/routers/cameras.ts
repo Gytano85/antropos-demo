@@ -34,8 +34,8 @@ const observationInput = z.object({
 });
 
 export async function ensureCameraTables() {
-	await db.execute(sql.raw(`
-		CREATE TABLE IF NOT EXISTS camera_devices (
+	const statements = [
+		`CREATE TABLE IF NOT EXISTS camera_devices (
 			id serial PRIMARY KEY,
 			user_uid varchar(255) NOT NULL,
 			name varchar(120) NOT NULL,
@@ -51,8 +51,8 @@ export async function ensureCameraTables() {
 			last_person_count integer NOT NULL DEFAULT 0,
 			created_at timestamp DEFAULT now(),
 			updated_at timestamp DEFAULT now()
-		);
-		CREATE TABLE IF NOT EXISTS camera_presence_events (
+		)`,
+		`CREATE TABLE IF NOT EXISTS camera_presence_events (
 			id serial PRIMARY KEY,
 			user_uid varchar(255) NOT NULL,
 			camera_id integer NOT NULL,
@@ -61,8 +61,8 @@ export async function ensureCameraTables() {
 			status varchar(40) NOT NULL,
 			source varchar(40) NOT NULL DEFAULT 'webcam',
 			created_at timestamp DEFAULT now()
-		);
-		CREATE TABLE IF NOT EXISTS camera_alerts (
+		)`,
+		`CREATE TABLE IF NOT EXISTS camera_alerts (
 			id serial PRIMARY KEY,
 			user_uid varchar(255) NOT NULL,
 			camera_id integer NOT NULL,
@@ -73,8 +73,12 @@ export async function ensureCameraTables() {
 			resolved_at timestamp,
 			created_at timestamp DEFAULT now(),
 			updated_at timestamp DEFAULT now()
-		);
-	`));
+		)`,
+	];
+
+	for (const statement of statements) {
+		await db.execute(sql.raw(statement));
+	}
 }
 
 async function ensureCameraDemo(userId: string) {
@@ -93,7 +97,9 @@ async function ensureCameraDemo(userId: string) {
 				check_interval_seconds: 3,
 				updated_at: new Date(),
 			})
-			.where(sql`${cameraDevices.user_uid} = ${userId} AND ${cameraDevices.model_id} = 'tiny-person-detection-stwdp/6'`);
+			.where(
+				sql`${cameraDevices.user_uid} = ${userId} AND ${cameraDevices.model_id} = 'tiny-person-detection-stwdp/6'`,
+			);
 		return;
 	}
 
@@ -159,36 +165,38 @@ export const camerasRouter = router({
 		};
 	}),
 
-	saveCamera: protectedProcedure.input(cameraInput).mutation(async ({ ctx, input }) => {
-		if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
-		await ensureCameraTables();
+	saveCamera: protectedProcedure
+		.input(cameraInput)
+		.mutation(async ({ ctx, input }) => {
+			if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
+			await ensureCameraTables();
 
-		const values = {
-			user_uid: ctx.user.id,
-			name: input.name,
-			location: input.location,
-			model_id: input.modelId,
-			confidence_threshold: input.confidenceThreshold,
-			check_interval_seconds: input.checkIntervalSeconds,
-			no_person_timeout_seconds: input.noPersonTimeoutSeconds,
-			status: input.status,
-			updated_at: new Date(),
-		};
+			const values = {
+				user_uid: ctx.user.id,
+				name: input.name,
+				location: input.location,
+				model_id: input.modelId,
+				confidence_threshold: input.confidenceThreshold,
+				check_interval_seconds: input.checkIntervalSeconds,
+				no_person_timeout_seconds: input.noPersonTimeoutSeconds,
+				status: input.status,
+				updated_at: new Date(),
+			};
 
-		if (input.id) {
-			await db
-				.update(cameraDevices)
-				.set(values)
-				.where(eq(cameraDevices.id, input.id));
+			if (input.id) {
+				await db
+					.update(cameraDevices)
+					.set(values)
+					.where(eq(cameraDevices.id, input.id));
+				return { ok: true };
+			}
+
+			await db.insert(cameraDevices).values({
+				...values,
+				source_type: "webcam",
+			});
 			return { ok: true };
-		}
-
-		await db.insert(cameraDevices).values({
-			...values,
-			source_type: "webcam",
-		});
-		return { ok: true };
-	}),
+		}),
 
 	recordObservation: protectedProcedure
 		.input(observationInput)
@@ -203,13 +211,17 @@ export const camerasRouter = router({
 				.limit(1);
 
 			if (!camera || camera.user_uid !== ctx.user.id) {
-				throw new TRPCError({ code: "NOT_FOUND", message: "Camara no encontrada" });
+				throw new TRPCError({
+					code: "NOT_FOUND",
+					message: "Camara no encontrada",
+				});
 			}
 
 			const now = new Date();
 			const detected = input.personCount > 0;
 			const nextStatus =
-				input.status === "camera_error" || input.status === "model_not_configured"
+				input.status === "camera_error" ||
+				input.status === "model_not_configured"
 					? input.status
 					: detected
 						? "active"
@@ -253,7 +265,12 @@ export const camerasRouter = router({
 						: input.status === "model_not_configured"
 							? "model_not_configured"
 							: "no_person_timeout";
-				await openAlert(ctx.user.id, input.cameraId, type, alertMessage(type, camera.name));
+				await openAlert(
+					ctx.user.id,
+					input.cameraId,
+					type,
+					alertMessage(type, camera.name),
+				);
 			} else if (detected) {
 				await resolveAlerts(ctx.user.id, input.cameraId);
 			}
@@ -294,7 +311,9 @@ async function openAlert(
 	const existing = await db
 		.select()
 		.from(cameraAlerts)
-		.where(sql`${cameraAlerts.user_uid} = ${userId} AND ${cameraAlerts.camera_id} = ${cameraId} AND ${cameraAlerts.type} = ${type} AND ${cameraAlerts.status} = 'open'`)
+		.where(
+			sql`${cameraAlerts.user_uid} = ${userId} AND ${cameraAlerts.camera_id} = ${cameraId} AND ${cameraAlerts.type} = ${type} AND ${cameraAlerts.status} = 'open'`,
+		)
 		.limit(1);
 
 	if (existing.length > 0) return;
@@ -311,12 +330,19 @@ async function openAlert(
 async function resolveAlerts(userId: string, cameraId: number) {
 	await db
 		.update(cameraAlerts)
-		.set({ status: "resolved", resolved_at: new Date(), updated_at: new Date() })
-		.where(sql`${cameraAlerts.user_uid} = ${userId} AND ${cameraAlerts.camera_id} = ${cameraId} AND ${cameraAlerts.status} = 'open'`);
+		.set({
+			status: "resolved",
+			resolved_at: new Date(),
+			updated_at: new Date(),
+		})
+		.where(
+			sql`${cameraAlerts.user_uid} = ${userId} AND ${cameraAlerts.camera_id} = ${cameraId} AND ${cameraAlerts.status} = 'open'`,
+		);
 }
 
 function alertMessage(type: string, cameraName: string) {
-	if (type === "camera_error") return `${cameraName}: no se pudo leer la camara.`;
+	if (type === "camera_error")
+		return `${cameraName}: no se pudo leer la camara.`;
 	if (type === "model_not_configured") {
 		return `${cameraName}: falta configurar ROBOFLOW_API_KEY para deteccion real.`;
 	}

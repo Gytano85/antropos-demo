@@ -34,21 +34,12 @@ import {
 import type React from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
+import {
+	evaluatePresenceWindow,
+	type PresenceSample,
+	type PresenceState,
+} from "@/lib/cameras/presence-engine";
 import { useTRPC } from "@/lib/trpc/client";
-
-type CameraDevice = {
-	id: number;
-	name: string;
-	location: string;
-	modelId: string;
-	confidenceThreshold: number;
-	checkIntervalSeconds: number;
-	noPersonTimeoutSeconds: number;
-	status: string;
-	lastSeenAt: string | null;
-	lastCheckedAt: string | null;
-	lastPersonCount: number;
-};
 
 type DetectionResult = {
 	configured: boolean;
@@ -85,6 +76,7 @@ export default function CamerasPage() {
 	const videoRef = useRef<HTMLVideoElement | null>(null);
 	const canvasRef = useRef<HTMLCanvasElement | null>(null);
 	const streamRef = useRef<MediaStream | null>(null);
+	const previousFrameRef = useRef<Uint8ClampedArray | null>(null);
 	const [selectedId, setSelectedId] = useState<number | null>(null);
 	const [running, setRunning] = useState(false);
 	const [cameraError, setCameraError] = useState<string | null>(null);
@@ -92,11 +84,15 @@ export default function CamerasPage() {
 	const [stablePresence, setStablePresence] = useState({
 		personCount: 0,
 		rawPersonCount: 0,
+		status: "absent" as PresenceState["status"],
+		score: 0,
+		positiveSamples: 0,
+		totalSamples: 0,
 		lastPositiveAt: null as number | null,
 		updatedAt: null as number | null,
 	});
 	const stablePresenceRef = useRef(stablePresence);
-	const presenceSamplesRef = useRef<Array<{ count: number; time: number }>>([]);
+	const presenceSamplesRef = useRef<PresenceSample[]>([]);
 	const [busy, setBusy] = useState(false);
 	const [draft, setDraft] = useState({
 		name: "",
@@ -137,7 +133,9 @@ export default function CamerasPage() {
 	const saveCamera = useMutation(
 		trpc.cameras.saveCamera.mutationOptions({
 			onSuccess: async () => {
-				await queryClient.invalidateQueries(trpc.cameras.overview.queryOptions());
+				await queryClient.invalidateQueries(
+					trpc.cameras.overview.queryOptions(),
+				);
 				toast.success("Camara guardada.");
 			},
 			onError: (error) => toast.error(error.message),
@@ -147,14 +145,18 @@ export default function CamerasPage() {
 	const recordObservation = useMutation(
 		trpc.cameras.recordObservation.mutationOptions({
 			onSuccess: async () => {
-				await queryClient.invalidateQueries(trpc.cameras.overview.queryOptions());
+				await queryClient.invalidateQueries(
+					trpc.cameras.overview.queryOptions(),
+				);
 			},
 			onError: (error) => toast.error(error.message),
 		}),
 	);
 
 	const stopCamera = useCallback(() => {
-		streamRef.current?.getTracks().forEach((track) => track.stop());
+		for (const track of streamRef.current?.getTracks() ?? []) {
+			track.stop();
+		}
 		streamRef.current = null;
 		setRunning(false);
 	}, []);
@@ -191,37 +193,106 @@ export default function CamerasPage() {
 		}
 	};
 
-	const stabilizePresence = useCallback((rawPersonCount: number) => {
+	const stabilizePresence = useCallback((sample: PresenceSample) => {
 		const now = Date.now();
-		const holdMs = 5_000;
-		const current = stablePresenceRef.current;
 		presenceSamplesRef.current = [
-			...presenceSamplesRef.current.filter((sample) => now - sample.time <= holdMs),
-			{ count: rawPersonCount, time: now },
+			...presenceSamplesRef.current.filter((item) => now - item.time <= 15_000),
+			sample,
 		];
-		const positiveSamples = presenceSamplesRef.current.filter(
-			(sample) => sample.count > 0,
-		);
-		const lastPositiveAt = rawPersonCount > 0 ? now : current.lastPositiveAt;
-		const positiveMode = getConservativeMode(
-			positiveSamples.map((sample) => sample.count),
-		);
-		const personCount =
-			positiveMode > 0
-				? positiveMode
-				: lastPositiveAt !== null && now - lastPositiveAt <= holdMs
-					? current.personCount
-					: 0;
-		const next = {
-			personCount,
-			rawPersonCount,
-			lastPositiveAt,
-			updatedAt: now,
-		};
+		const next = evaluatePresenceWindow(presenceSamplesRef.current, {
+			now,
+			windowMs: 15_000,
+			holdMs: 5_000,
+			minPositiveRatio: 0.42,
+			minSamples: 2,
+			previous: stablePresenceRef.current,
+		});
 		stablePresenceRef.current = next;
 		setStablePresence(next);
 		return next;
 	}, []);
+
+	const measureMotionScore = useCallback((canvas: HTMLCanvasElement) => {
+		const sampleCanvas = document.createElement("canvas");
+		sampleCanvas.width = 64;
+		sampleCanvas.height = 36;
+		const sampleContext = sampleCanvas.getContext("2d", {
+			willReadFrequently: true,
+		});
+		if (!sampleContext) return 0;
+		sampleContext.drawImage(
+			canvas,
+			0,
+			0,
+			sampleCanvas.width,
+			sampleCanvas.height,
+		);
+		const data = sampleContext.getImageData(
+			0,
+			0,
+			sampleCanvas.width,
+			sampleCanvas.height,
+		).data;
+		const previous = previousFrameRef.current;
+		previousFrameRef.current = new Uint8ClampedArray(data);
+		if (!previous || previous.length !== data.length) return 0;
+
+		let changed = 0;
+		const total = data.length / 4;
+		for (let index = 0; index < data.length; index += 4) {
+			const currentLum =
+				(data[index] ?? 0) * 0.299 +
+				(data[index + 1] ?? 0) * 0.587 +
+				(data[index + 2] ?? 0) * 0.114;
+			const previousLum =
+				(previous[index] ?? 0) * 0.299 +
+				(previous[index + 1] ?? 0) * 0.587 +
+				(previous[index + 2] ?? 0) * 0.114;
+			if (Math.abs(currentLum - previousLum) > 28) changed += 1;
+		}
+		return Math.round((changed / total) * 100) / 100;
+	}, []);
+
+	const sampleFromCounts = useCallback(
+		({
+			personCount,
+			confidence,
+			source,
+			motionScore,
+		}: {
+			personCount: number;
+			confidence?: number | null;
+			source: PresenceSample["source"];
+			motionScore: number;
+		}): PresenceSample => {
+			if (personCount > 0) {
+				return {
+					time: Date.now(),
+					personCount,
+					confidence,
+					source,
+					motionScore,
+				};
+			}
+			if (motionScore >= 0.18) {
+				return {
+					time: Date.now(),
+					personCount: 1,
+					confidence: 0.72,
+					source: "motion",
+					motionScore,
+				};
+			}
+			return {
+				time: Date.now(),
+				personCount: 0,
+				confidence: null,
+				source: "none",
+				motionScore,
+			};
+		},
+		[],
+	);
 
 	const detectOnce = useCallback(async () => {
 		if (!selected || !videoRef.current || !canvasRef.current || busy) return;
@@ -237,6 +308,7 @@ export default function CamerasPage() {
 			if (!context) return;
 			context.drawImage(video, 0, 0, canvas.width, canvas.height);
 			const imageDataUrl = canvas.toDataURL("image/jpeg", 0.9);
+			const motionScore = measureMotionScore(canvas);
 
 			if (window.FaceDetector) {
 				const detector = new window.FaceDetector({
@@ -244,13 +316,21 @@ export default function CamerasPage() {
 					maxDetectedFaces: 20,
 				});
 				const faces = await detector.detect(canvas);
-				const stable = stabilizePresence(faces.length);
+				const sample = sampleFromCounts({
+					personCount: faces.length,
+					confidence: faces.length > 0 ? 0.85 : null,
+					source: faces.length > 0 ? "face" : "none",
+					motionScore,
+				});
+				const stable = stabilizePresence(sample);
 				const result: DetectionResult = {
 					configured: true,
 					personCount: stable.personCount,
-					confidenceAvg: faces.length > 0 ? 0.8 : null,
+					confidenceAvg: stable.personCount > 0 ? stable.score : null,
 					message:
-						"Deteccion local por rostro con suavizado de 5 segundos para webcam frontal.",
+						sample.source === "motion"
+							? "Presencia probable por movimiento local dentro de ventana estable."
+							: "Deteccion local por rostro con ventana estable de 15 segundos.",
 					predictions: [],
 				};
 				setDetection(result);
@@ -274,32 +354,44 @@ export default function CamerasPage() {
 			});
 			const result = (await response.json()) as DetectionResult;
 			const rawPersonCount = result.personCount ?? 0;
-			const stable = stabilizePresence(rawPersonCount);
+			const sample = sampleFromCounts({
+				personCount: rawPersonCount,
+				confidence: result.confidenceAvg,
+				source: rawPersonCount > 0 ? "model" : "none",
+				motionScore,
+			});
+			const stable = stabilizePresence(sample);
 			const stabilizedResult = {
 				...result,
 				personCount: stable.personCount,
+				confidenceAvg: stable.personCount > 0 ? stable.score : null,
 				message:
-					stable.personCount > 0 && rawPersonCount === 0
+					stable.status === "probably_present"
 						? "Presencia mantenida por lectura reciente durante maximo 5 segundos."
-						: result.message,
+						: sample.source === "motion"
+							? "Presencia probable por movimiento local; se confirma por ventana temporal."
+							: result.message,
 			};
 			setDetection(stabilizedResult);
 
 			recordObservation.mutate({
 				cameraId: selected.id,
 				personCount: stable.personCount,
-				confidenceAvg: result.confidenceAvg ?? null,
-				status: !result.configured
-					? "model_not_configured"
-					: response.ok && stable.personCount > 0
-						? "person_detected"
-						: response.ok
-							? "empty"
-							: "camera_error",
+				confidenceAvg: stabilizedResult.confidenceAvg ?? null,
+				status:
+					!result.configured && stable.personCount === 0
+						? "model_not_configured"
+						: response.ok && stable.personCount > 0
+							? "person_detected"
+							: response.ok
+								? "empty"
+								: "camera_error",
 			});
 		} catch (error) {
 			const message =
-				error instanceof Error ? error.message : "No se pudo analizar el frame.";
+				error instanceof Error
+					? error.message
+					: "No se pudo analizar el frame.";
 			setDetection({
 				configured: true,
 				personCount: 0,
@@ -315,7 +407,14 @@ export default function CamerasPage() {
 		} finally {
 			setBusy(false);
 		}
-	}, [busy, data?.inferenceConfigured, recordObservation, selected, stabilizePresence]);
+	}, [
+		busy,
+		measureMotionScore,
+		recordObservation,
+		sampleFromCounts,
+		selected,
+		stabilizePresence,
+	]);
 
 	useEffect(() => {
 		if (!running || !selected) return;
@@ -337,7 +436,9 @@ export default function CamerasPage() {
 
 	useEffect(() => () => stopCamera(), [stopCamera]);
 
-	const openAlerts = (data?.alerts ?? []).filter((alert) => alert.status === "open");
+	const openAlerts = (data?.alerts ?? []).filter(
+		(alert) => alert.status === "open",
+	);
 
 	return (
 		<div className="space-y-6">
@@ -349,11 +450,16 @@ export default function CamerasPage() {
 							<h1 className="font-bold text-2xl">Camara de presencia</h1>
 						</div>
 						<p className="mt-1 text-muted-foreground text-sm">
-							Conecta una webcam, cuenta personas y abre alerta si pasan 3 minutos sin presencia.
+							Conecta una webcam, cuenta personas y abre alerta si pasan 3
+							minutos sin presencia.
 						</p>
 					</div>
-					<Badge variant={data?.inferenceConfigured ? "default" : "destructive"}>
-						{data?.inferenceConfigured ? "Roboflow configurado" : "Falta ROBOFLOW_API_KEY"}
+					<Badge
+						variant={data?.inferenceConfigured ? "default" : "destructive"}
+					>
+						{data?.inferenceConfigured
+							? "Roboflow configurado"
+							: "Falta ROBOFLOW_API_KEY"}
 					</Badge>
 				</div>
 			</div>
@@ -363,13 +469,26 @@ export default function CamerasPage() {
 				<Metric
 					icon={UsersIcon}
 					label="Personas ahora"
-					value={stablePresence.personCount || selected?.lastPersonCount || detection?.personCount || 0}
+					value={
+						stablePresence.personCount ||
+						selected?.lastPersonCount ||
+						detection?.personCount ||
+						0
+					}
 				/>
-				<Metric icon={ShieldAlertIcon} label="Alertas abiertas" value={openAlerts.length} />
+				<Metric
+					icon={ShieldAlertIcon}
+					label="Alertas abiertas"
+					value={openAlerts.length}
+				/>
 				<Metric
 					icon={EyeIcon}
 					label="Ultima deteccion"
-					value={selected?.lastSeenAt ? new Date(selected.lastSeenAt).toLocaleTimeString() : "Sin datos"}
+					value={
+						selected?.lastSeenAt
+							? new Date(selected.lastSeenAt).toLocaleTimeString()
+							: "Sin datos"
+					}
 				/>
 			</div>
 
@@ -381,7 +500,8 @@ export default function CamerasPage() {
 							Webcam en vivo
 						</CardTitle>
 						<CardDescription>
-							Para presentarlo: conecta tu webcam, acepta permisos del navegador y deja que corra la lectura.
+							Para presentarlo: conecta tu webcam, acepta permisos del navegador
+							y deja que corra la lectura.
 						</CardDescription>
 					</CardHeader>
 					<CardContent className="space-y-4">
@@ -399,11 +519,19 @@ export default function CamerasPage() {
 								<CameraIcon className="mr-2 h-4 w-4" />
 								Encender webcam
 							</Button>
-							<Button variant="outline" onClick={stopCamera} disabled={!running}>
+							<Button
+								variant="outline"
+								onClick={stopCamera}
+								disabled={!running}
+							>
 								<VideoOffIcon className="mr-2 h-4 w-4" />
 								Apagar
 							</Button>
-							<Button variant="outline" onClick={detectOnce} disabled={!running || busy}>
+							<Button
+								variant="outline"
+								onClick={detectOnce}
+								disabled={!running || busy}
+							>
 								<RefreshCwIcon className="mr-2 h-4 w-4" />
 								Analizar ahora
 							</Button>
@@ -445,7 +573,9 @@ export default function CamerasPage() {
 										}`}
 									>
 										<div className="font-medium">{device.name}</div>
-										<div className="text-muted-foreground text-xs">{device.location}</div>
+										<div className="text-muted-foreground text-xs">
+											{device.location}
+										</div>
 									</button>
 								))}
 							</div>
@@ -454,17 +584,23 @@ export default function CamerasPage() {
 							<LabeledInput
 								label="Nombre"
 								value={draft.name}
-								onChange={(value) => setDraft((current) => ({ ...current, name: value }))}
+								onChange={(value) =>
+									setDraft((current) => ({ ...current, name: value }))
+								}
 							/>
 							<LabeledInput
 								label="Ubicacion"
 								value={draft.location}
-								onChange={(value) => setDraft((current) => ({ ...current, location: value }))}
+								onChange={(value) =>
+									setDraft((current) => ({ ...current, location: value }))
+								}
 							/>
 							<LabeledInput
 								label="Modelo Roboflow"
 								value={draft.modelId}
-								onChange={(value) => setDraft((current) => ({ ...current, modelId: value }))}
+								onChange={(value) =>
+									setDraft((current) => ({ ...current, modelId: value }))
+								}
 							/>
 							<div className="grid grid-cols-2 gap-3">
 								<LabeledInput
@@ -528,7 +664,8 @@ export default function CamerasPage() {
 					<CardHeader>
 						<CardTitle>Alertas</CardTitle>
 						<CardDescription>
-							Aqui queda el rastro cuando la camara deja de ver personas, falla o no tiene modelo.
+							Aqui queda el rastro cuando la camara deja de ver personas, falla
+							o no tiene modelo.
 						</CardDescription>
 					</CardHeader>
 					<CardContent>
@@ -544,19 +681,30 @@ export default function CamerasPage() {
 								{(data?.alerts ?? []).map((alert) => (
 									<TableRow key={alert.id}>
 										<TableCell>
-											<Badge variant={alert.status === "open" ? "destructive" : "outline"}>
+											<Badge
+												variant={
+													alert.status === "open" ? "destructive" : "outline"
+												}
+											>
 												{alert.status === "open" ? "Abierta" : "Resuelta"}
 											</Badge>
 										</TableCell>
-										<TableCell className="max-w-[360px]">{alert.message}</TableCell>
+										<TableCell className="max-w-[360px]">
+											{alert.message}
+										</TableCell>
 										<TableCell>
-											{alert.startedAt ? new Date(alert.startedAt).toLocaleString() : "-"}
+											{alert.startedAt
+												? new Date(alert.startedAt).toLocaleString()
+												: "-"}
 										</TableCell>
 									</TableRow>
 								))}
 								{!isLoading && (data?.alerts ?? []).length === 0 && (
 									<TableRow>
-										<TableCell colSpan={3} className="text-center text-muted-foreground">
+										<TableCell
+											colSpan={3}
+											className="text-center text-muted-foreground"
+										>
 											Sin alertas todavia.
 										</TableCell>
 									</TableRow>
@@ -570,7 +718,8 @@ export default function CamerasPage() {
 					<CardHeader>
 						<CardTitle>Lecturas recientes</CardTitle>
 						<CardDescription>
-							Muestras guardadas por la webcam para comprobar que el modulo esta trabajando.
+							Muestras guardadas por la webcam para comprobar que el modulo esta
+							trabajando.
 						</CardDescription>
 					</CardHeader>
 					<CardContent>
@@ -587,18 +736,25 @@ export default function CamerasPage() {
 								{(data?.events ?? []).slice(0, 12).map((event) => (
 									<TableRow key={event.id}>
 										<TableCell>
-											{event.createdAt ? new Date(event.createdAt).toLocaleTimeString() : "-"}
+											{event.createdAt
+												? new Date(event.createdAt).toLocaleTimeString()
+												: "-"}
 										</TableCell>
 										<TableCell>{event.personCount}</TableCell>
 										<TableCell>
-											{event.confidenceAvg ? `${Math.round(event.confidenceAvg * 100)}%` : "-"}
+											{event.confidenceAvg
+												? `${Math.round(event.confidenceAvg * 100)}%`
+												: "-"}
 										</TableCell>
 										<TableCell>{readableStatus(event.status)}</TableCell>
 									</TableRow>
 								))}
 								{!isLoading && (data?.events ?? []).length === 0 && (
 									<TableRow>
-										<TableCell colSpan={4} className="text-center text-muted-foreground">
+										<TableCell
+											colSpan={4}
+											className="text-center text-muted-foreground"
+										>
 											Enciende la webcam para empezar a registrar lecturas.
 										</TableCell>
 									</TableRow>
@@ -649,7 +805,11 @@ function LabeledInput({
 	return (
 		<div className="space-y-2">
 			<Label>{label}</Label>
-			<Input value={value} onChange={(event) => onChange(event.target.value)} {...props} />
+			<Input
+				value={value}
+				onChange={(event) => onChange(event.target.value)}
+				{...props}
+			/>
 		</div>
 	);
 }
@@ -682,13 +842,18 @@ function DetectionStatus({
 	const hasLocalFaceDetector =
 		typeof window !== "undefined" && Boolean(window.FaceDetector);
 
-	if ((!inferenceConfigured && !hasLocalFaceDetector) || result?.configured === false) {
+	if (
+		(!inferenceConfigured && !hasLocalFaceDetector) ||
+		result?.configured === false
+	) {
 		return (
 			<div className="flex items-start gap-2 rounded-xl border border-amber-300 bg-amber-50 p-3 text-amber-900 text-sm">
 				<AlertTriangleIcon className="mt-0.5 h-4 w-4" />
 				<div>
 					<div className="font-medium">Modelo no configurado</div>
-					<div>Agrega ROBOFLOW_API_KEY para activar deteccion real de personas.</div>
+					<div>
+						Agrega ROBOFLOW_API_KEY para activar deteccion real de personas.
+					</div>
 				</div>
 			</div>
 		);
@@ -730,11 +895,15 @@ function DetectionStatus({
 					</span>
 				</div>
 				<span className="text-muted-foreground">
-					{result.confidenceAvg ? `${Math.round(result.confidenceAvg * 100)}%` : "-"}
+					{result.confidenceAvg
+						? `${Math.round(result.confidenceAvg * 100)}%`
+						: "-"}
 				</span>
 			</div>
 			{result.message && (
-				<div className="mt-1 text-muted-foreground text-xs">{result.message}</div>
+				<div className="mt-1 text-muted-foreground text-xs">
+					{result.message}
+				</div>
 			)}
 			<div className="mt-2 grid gap-2 text-muted-foreground text-xs sm:grid-cols-3">
 				<div>Frame actual: {stablePresence.rawPersonCount}</div>
@@ -759,21 +928,4 @@ function readableStatus(status: string) {
 		model_not_configured: "Sin modelo",
 	};
 	return labels[status] ?? status;
-}
-
-function getConservativeMode(values: number[]) {
-	if (values.length === 0) return 0;
-	const counts = new Map<number, number>();
-	for (const value of values) {
-		counts.set(value, (counts.get(value) ?? 0) + 1);
-	}
-	let bestValue = values[0] ?? 0;
-	let bestCount = 0;
-	for (const [value, count] of counts) {
-		if (count > bestCount || (count === bestCount && value < bestValue)) {
-			bestValue = value;
-			bestCount = count;
-		}
-	}
-	return bestValue;
 }

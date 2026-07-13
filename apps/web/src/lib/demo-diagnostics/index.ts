@@ -1,6 +1,6 @@
-﻿import { sql } from "drizzle-orm";
-import { existsSync } from "node:fs";
+﻿import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { orders, products, user } from "@/lib/db/schema";
 import { createCallerFactory } from "@/lib/trpc/init";
@@ -18,6 +18,20 @@ async function safeQuery(label: string, query: Promise<unknown>) {
 	}
 }
 
+type RestockingDiagnostics = {
+	totalProducts?: number;
+	items?: unknown[];
+	urgentCount?: number;
+	soonCount?: number;
+};
+
+type VisionOpsDiagnostics = {
+	sources?: unknown[];
+	zones?: unknown[];
+	rules?: unknown[];
+	incidents?: unknown[];
+};
+
 export async function getDemoDiagnostics() {
 	const cwd = process.cwd();
 	const bundledCandidates = [
@@ -26,32 +40,39 @@ export async function getDemoDiagnostics() {
 		join(cwd, ".next", "standalone", "apps", "web", "demo-data", "pglite"),
 	];
 
-	const [users, productCounts, orderCounts, demoUser, tableCheck] = await Promise.all([
-		safeQuery("users", db.select({ count: sql<number>`count(*)` }).from(user)),
-		safeQuery(
-			"productsByUser",
-			db
-				.select({ user_uid: products.user_uid, count: sql<number>`count(*)` })
-				.from(products)
-				.groupBy(products.user_uid),
-		),
-		safeQuery(
-			"ordersByUser",
-			db
-				.select({ user_uid: orders.user_uid, count: sql<number>`count(*)` })
-				.from(orders)
-				.groupBy(orders.user_uid),
-		),
-		safeQuery(
-			"demoUser",
-			db
-				.select({ id: user.id, email: user.email })
-				.from(user)
-				.where(sql`${user.email} = ${"test@example.com"}`)
-				.limit(1),
-		),
-		safeQuery("tableCheck", db.execute(sql`select to_regclass('products') as products_table`)),
-	]);
+	const [users, productCounts, orderCounts, demoUser, tableCheck] =
+		await Promise.all([
+			safeQuery(
+				"users",
+				db.select({ count: sql<number>`count(*)` }).from(user),
+			),
+			safeQuery(
+				"productsByUser",
+				db
+					.select({ user_uid: products.user_uid, count: sql<number>`count(*)` })
+					.from(products)
+					.groupBy(products.user_uid),
+			),
+			safeQuery(
+				"ordersByUser",
+				db
+					.select({ user_uid: orders.user_uid, count: sql<number>`count(*)` })
+					.from(orders)
+					.groupBy(orders.user_uid),
+			),
+			safeQuery(
+				"demoUser",
+				db
+					.select({ id: user.id, email: user.email })
+					.from(user)
+					.where(sql`${user.email} = ${"test@example.com"}`)
+					.limit(1),
+			),
+			safeQuery(
+				"tableCheck",
+				db.execute(sql`select to_regclass('products') as products_table`),
+			),
+		]);
 	const demoUserRow =
 		demoUser.ok && Array.isArray(demoUser.data) ? demoUser.data[0] : null;
 	const caller = demoUserRow
@@ -63,34 +84,43 @@ export async function getDemoDiagnostics() {
 				},
 			})
 		: null;
-	const [productsRouter, tablesRouter, restockingRouter, dashboardRouter] =
-		await Promise.all([
-			safeQuery(
-				"trpc.products.list",
-				caller ? caller.products.list() : Promise.resolve(null),
-			),
-			safeQuery(
-				"trpc.tables.listOpen",
-				caller ? caller.tables.listOpen() : Promise.resolve(null),
-			),
-			safeQuery(
-				"trpc.restocking.recommendations",
-				caller
-					? caller.restocking.recommendations({
-							historyDays: 30,
-							leadTimeDays: 7,
-							coverageDays: 14,
-							safetyStockPct: 25,
-							urgentDays: 3,
-							soonDays: 7,
-						})
-					: Promise.resolve(null),
-			),
-			safeQuery(
-				"trpc.dashboard.stats",
-				caller ? caller.dashboard.stats() : Promise.resolve(null),
-			),
-		]);
+	const [
+		productsRouter,
+		tablesRouter,
+		restockingRouter,
+		dashboardRouter,
+		visionOpsRouter,
+	] = await Promise.all([
+		safeQuery(
+			"trpc.products.list",
+			caller ? caller.products.list() : Promise.resolve(null),
+		),
+		safeQuery(
+			"trpc.tables.listOpen",
+			caller ? caller.tables.listOpen() : Promise.resolve(null),
+		),
+		safeQuery(
+			"trpc.restocking.recommendations",
+			caller
+				? caller.restocking.recommendations({
+						historyDays: 30,
+						leadTimeDays: 7,
+						coverageDays: 14,
+						safetyStockPct: 25,
+						urgentDays: 3,
+						soonDays: 7,
+					})
+				: Promise.resolve(null),
+		),
+		safeQuery(
+			"trpc.dashboard.stats",
+			caller ? caller.dashboard.stats() : Promise.resolve(null),
+		),
+		safeQuery(
+			"trpc.visionOps.overview",
+			caller ? caller.visionOps.overview() : Promise.resolve(null),
+		),
+	]);
 
 	return {
 		commit: process.env.VERCEL_GIT_COMMIT_SHA ?? null,
@@ -100,7 +130,10 @@ export async function getDemoDiagnostics() {
 		hasDatabaseUrl: Boolean(process.env.DATABASE_URL),
 		hasPgliteDataDir: Boolean(process.env.PGLITE_DATA_DIR),
 		cwd,
-		bundledCandidates: bundledCandidates.map((path) => ({ path, exists: existsSync(path) })),
+		bundledCandidates: bundledCandidates.map((path) => ({
+			path,
+			exists: existsSync(path),
+		})),
 		checks: { users, productCounts, orderCounts, demoUser, tableCheck },
 		routerChecks: {
 			productsList:
@@ -116,14 +149,34 @@ export async function getDemoDiagnostics() {
 					? {
 							...restockingRouter,
 							summary: {
-								totalProducts: (restockingRouter.data as any).totalProducts,
-								items: (restockingRouter.data as any).items?.length,
-								urgentCount: (restockingRouter.data as any).urgentCount,
-								soonCount: (restockingRouter.data as any).soonCount,
+								totalProducts: (restockingRouter.data as RestockingDiagnostics)
+									.totalProducts,
+								items: (restockingRouter.data as RestockingDiagnostics).items
+									?.length,
+								urgentCount: (restockingRouter.data as RestockingDiagnostics)
+									.urgentCount,
+								soonCount: (restockingRouter.data as RestockingDiagnostics)
+									.soonCount,
 							},
 						}
 					: restockingRouter,
 			dashboardStats: dashboardRouter,
+			visionOpsOverview:
+				visionOpsRouter.ok && visionOpsRouter.data
+					? {
+							...visionOpsRouter,
+							summary: {
+								sources: (visionOpsRouter.data as VisionOpsDiagnostics).sources
+									?.length,
+								zones: (visionOpsRouter.data as VisionOpsDiagnostics).zones
+									?.length,
+								rules: (visionOpsRouter.data as VisionOpsDiagnostics).rules
+									?.length,
+								incidents: (visionOpsRouter.data as VisionOpsDiagnostics)
+									.incidents?.length,
+							},
+						}
+					: visionOpsRouter,
 		},
 	};
 }
