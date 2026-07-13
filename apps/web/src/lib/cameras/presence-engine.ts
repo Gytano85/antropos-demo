@@ -3,7 +3,7 @@ export type PresenceSample = {
 	personCount: number;
 	confidence?: number | null;
 	motionScore?: number;
-	source: "face" | "model" | "motion" | "none";
+	source: "face" | "model" | "foreground" | "motion" | "none";
 };
 
 export type PresenceState = {
@@ -93,6 +93,13 @@ function conservativeCount(samples: PresenceSample[]) {
 		.filter((sample) => positiveWeight(sample) >= 0.7)
 		.map((sample) => Math.max(1, sample.personCount));
 	if (counts.length === 0) return 0;
-	counts.sort((a, b) => a - b);
-	return counts[Math.floor(counts.length / 2)] ?? 1;
+	const frequency = new Map<number, number>();
+	for (const count of counts) {
+		frequency.set(count, (frequency.get(count) ?? 0) + 1);
+	}
+	return (
+		[...frequency.entries()].sort(
+			([countA, hitsA], [countB, hitsB]) => hitsB - hitsA || countB - countA,
+		)[0]?.[0] ?? 1
+	);
 }

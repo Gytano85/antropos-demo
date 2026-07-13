@@ -28,6 +28,7 @@ const observationInput = z.object({
 	confidenceAvg: z.number().min(0).max(1).nullable(),
 	status: z.enum([
 		"person_detected",
+		"multiple_people",
 		"empty",
 		"presence_error",
 		"camera_error",
@@ -229,6 +230,7 @@ export const camerasRouter = router({
 
 			const now = new Date();
 			const detected = input.personCount > 0;
+			const multiplePeople = input.personCount > 1;
 			const nextStatus =
 				input.status === "camera_error" ||
 				input.status === "model_not_configured"
@@ -266,6 +268,7 @@ export const camerasRouter = router({
 			const shouldAlert =
 				input.status === "camera_error" ||
 				input.status === "model_not_configured" ||
+				multiplePeople ||
 				secondsWithoutPerson >= camera.no_person_timeout_seconds;
 
 			if (shouldAlert) {
@@ -274,14 +277,16 @@ export const camerasRouter = router({
 						? "camera_error"
 						: input.status === "model_not_configured"
 							? "model_not_configured"
-							: "no_person_timeout";
+							: multiplePeople
+								? "multiple_people"
+								: "no_person_timeout";
 				await openAlert(
 					ctx.user.id,
 					input.cameraId,
 					type,
-					alertMessage(type, camera.name),
+					alertMessage(type, camera.name, input.personCount),
 				);
-			} else if (detected) {
+			} else if (detected && !multiplePeople) {
 				await resolveAlerts(ctx.user.id, input.cameraId);
 			}
 
@@ -351,11 +356,14 @@ async function resolveAlerts(userId: string, cameraId: number) {
 		);
 }
 
-function alertMessage(type: string, cameraName: string) {
+function alertMessage(type: string, cameraName: string, personCount = 0) {
 	if (type === "camera_error")
 		return `${cameraName}: no se pudo leer la camara.`;
 	if (type === "model_not_configured") {
 		return `${cameraName}: calibra el puesto vacio para activar deteccion local.`;
+	}
+	if (type === "multiple_people") {
+		return `${cameraName}: se detectaron ${personCount} personas en el puesto.`;
 	}
 	return `${cameraName}: no hay presencia dentro del tiempo configurado.`;
 }

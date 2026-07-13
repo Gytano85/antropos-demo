@@ -55,4 +55,24 @@ describe("camera presence engine", () => {
 		expect(result.personCount).toBe(0);
 		expect(result.status).toBe("absent");
 	});
+
+	it("preserves multiple people when repeated samples see two people", () => {
+		const result = evaluatePresenceWindow(
+			[
+				{ time: 0, personCount: 2, confidence: 0.82, source: "foreground" },
+				{ time: 1000, personCount: 1, confidence: 0.8, source: "face" },
+				{ time: 2000, personCount: 2, confidence: 0.86, source: "foreground" },
+			],
+			{
+				now: 2000,
+				windowMs: 15_000,
+				holdMs: 5_000,
+				minPositiveRatio: 0.42,
+				minSamples: 2,
+			},
+		);
+
+		expect(result.personCount).toBe(2);
+		expect(result.status).toBe("present");
+	});
 });
