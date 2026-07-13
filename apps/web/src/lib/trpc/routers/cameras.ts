@@ -13,6 +13,8 @@ const cameraInput = z.object({
 	id: z.number().optional(),
 	name: z.string().min(1).max(120),
 	location: z.string().min(1).max(120),
+	sourceType: z.enum(["webcam", "ip_camera"]).default("webcam"),
+	streamUrl: z.string().max(500).nullable().optional(),
 	modelId: z.string().min(3).max(160),
 	confidenceThreshold: z.number().min(0.05).max(0.95),
 	checkIntervalSeconds: z.number().int().min(3).max(120),
@@ -41,6 +43,7 @@ export async function ensureCameraTables() {
 			name varchar(120) NOT NULL,
 			location varchar(120) NOT NULL DEFAULT 'Entrada',
 			source_type varchar(30) NOT NULL DEFAULT 'webcam',
+			stream_url text,
 			model_id varchar(160) NOT NULL DEFAULT 'security-camera-with-person/1',
 			confidence_threshold real NOT NULL DEFAULT 0.12,
 			check_interval_seconds integer NOT NULL DEFAULT 3,
@@ -79,6 +82,11 @@ export async function ensureCameraTables() {
 	for (const statement of statements) {
 		await db.execute(sql.raw(statement));
 	}
+	await db.execute(
+		sql.raw(
+			"ALTER TABLE camera_devices ADD COLUMN IF NOT EXISTS stream_url text",
+		),
+	);
 }
 
 async function ensureCameraDemo(userId: string) {
@@ -108,6 +116,7 @@ async function ensureCameraDemo(userId: string) {
 		name: "Webcam entrada principal",
 		location: "Entrada principal",
 		source_type: "webcam",
+		stream_url: null,
 		model_id: "security-camera-with-person/1",
 		confidence_threshold: 0.12,
 		check_interval_seconds: 3,
@@ -175,6 +184,8 @@ export const camerasRouter = router({
 				user_uid: ctx.user.id,
 				name: input.name,
 				location: input.location,
+				source_type: input.sourceType,
+				stream_url: input.streamUrl ?? null,
 				model_id: input.modelId,
 				confidence_threshold: input.confidenceThreshold,
 				check_interval_seconds: input.checkIntervalSeconds,
@@ -193,7 +204,6 @@ export const camerasRouter = router({
 
 			await db.insert(cameraDevices).values({
 				...values,
-				source_type: "webcam",
 			});
 			return { ok: true };
 		}),
@@ -291,6 +301,7 @@ function mapDevice(device: typeof cameraDevices.$inferSelect) {
 		name: device.name,
 		location: device.location,
 		sourceType: device.source_type,
+		streamUrl: device.stream_url,
 		modelId: device.model_id,
 		confidenceThreshold: device.confidence_threshold,
 		checkIntervalSeconds: device.check_interval_seconds,

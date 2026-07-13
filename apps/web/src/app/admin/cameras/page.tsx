@@ -25,6 +25,7 @@ import {
 	CameraIcon,
 	CheckCircle2Icon,
 	EyeIcon,
+	NetworkIcon,
 	RefreshCwIcon,
 	SaveIcon,
 	ShieldAlertIcon,
@@ -74,6 +75,7 @@ export default function CamerasPage() {
 	const trpc = useTRPC();
 	const queryClient = useQueryClient();
 	const videoRef = useRef<HTMLVideoElement | null>(null);
+	const ipImageRef = useRef<HTMLImageElement | null>(null);
 	const canvasRef = useRef<HTMLCanvasElement | null>(null);
 	const streamRef = useRef<MediaStream | null>(null);
 	const previousFrameRef = useRef<Uint8ClampedArray | null>(null);
@@ -97,6 +99,8 @@ export default function CamerasPage() {
 	const [draft, setDraft] = useState({
 		name: "",
 		location: "",
+		sourceType: "webcam" as "webcam" | "ip_camera",
+		streamUrl: "",
 		modelId: "security-camera-with-person/1",
 		confidenceThreshold: 0.12,
 		checkIntervalSeconds: 3,
@@ -122,6 +126,8 @@ export default function CamerasPage() {
 		setDraft({
 			name: selected.name,
 			location: selected.location,
+			sourceType: selected.sourceType === "ip_camera" ? "ip_camera" : "webcam",
+			streamUrl: selected.streamUrl ?? "",
 			modelId: selected.modelId,
 			confidenceThreshold: selected.confidenceThreshold,
 			checkIntervalSeconds: selected.checkIntervalSeconds,
@@ -164,6 +170,15 @@ export default function CamerasPage() {
 	const startCamera = async () => {
 		if (!selected) return;
 		setCameraError(null);
+		if (draft.sourceType === "ip_camera") {
+			if (!draft.streamUrl.trim()) {
+				setCameraError("Agrega la URL HTTP/MJPEG/snapshot de la camara IP.");
+				return;
+			}
+			setRunning(true);
+			toast.success("Camara IP activada para prueba.");
+			return;
+		}
 		try {
 			const stream = await navigator.mediaDevices.getUserMedia({
 				video: {
@@ -295,18 +310,43 @@ export default function CamerasPage() {
 	);
 
 	const detectOnce = useCallback(async () => {
-		if (!selected || !videoRef.current || !canvasRef.current || busy) return;
+		if (!selected || !canvasRef.current || busy) return;
+		const isIpCamera = draft.sourceType === "ip_camera";
 		const video = videoRef.current;
-		if (video.readyState < 2 || video.videoWidth === 0) return;
+		const ipImage = ipImageRef.current;
+		if (
+			!isIpCamera &&
+			(!video || video.readyState < 2 || video.videoWidth === 0)
+		) {
+			return;
+		}
+		if (isIpCamera && (!ipImage?.complete || ipImage.naturalWidth === 0)) {
+			setCameraError(
+				"No se pudo leer la imagen de la camara IP. En navegador normalmente necesitas URL HTTP/MJPEG con CORS o un bridge local.",
+			);
+			return;
+		}
 
 		setBusy(true);
 		try {
 			const canvas = canvasRef.current;
-			canvas.width = video.videoWidth;
-			canvas.height = video.videoHeight;
+			canvas.width = isIpCamera
+				? (ipImage?.naturalWidth ?? 1280)
+				: (video?.videoWidth ?? 1280);
+			canvas.height = isIpCamera
+				? (ipImage?.naturalHeight ?? 720)
+				: (video?.videoHeight ?? 720);
 			const context = canvas.getContext("2d");
 			if (!context) return;
-			context.drawImage(video, 0, 0, canvas.width, canvas.height);
+			context.drawImage(
+				isIpCamera
+					? (ipImage as HTMLImageElement)
+					: (video as HTMLVideoElement),
+				0,
+				0,
+				canvas.width,
+				canvas.height,
+			);
 			const imageDataUrl = canvas.toDataURL("image/jpeg", 0.9);
 			const motionScore = measureMotionScore(canvas);
 
@@ -409,6 +449,7 @@ export default function CamerasPage() {
 		}
 	}, [
 		busy,
+		draft.sourceType,
 		measureMotionScore,
 		recordObservation,
 		sampleFromCounts,
@@ -450,8 +491,8 @@ export default function CamerasPage() {
 							<h1 className="font-bold text-2xl">Camara de presencia</h1>
 						</div>
 						<p className="mt-1 text-muted-foreground text-sm">
-							Conecta una webcam, cuenta personas y abre alerta si pasan 3
-							minutos sin presencia.
+							Conecta una cámara IP de la misma red o usa la webcam como modo
+							prueba. El objetivo es presencia en puesto, no vigilancia de robo.
 						</p>
 					</div>
 					<Badge
@@ -497,27 +538,45 @@ export default function CamerasPage() {
 					<CardHeader>
 						<CardTitle className="flex items-center gap-2">
 							<CameraIcon className="h-5 w-5" />
-							Webcam en vivo
+							{draft.sourceType === "ip_camera"
+								? "Cámara IP / stream"
+								: "Webcam de prueba"}
 						</CardTitle>
 						<CardDescription>
-							Para presentarlo: conecta tu webcam, acepta permisos del navegador
-							y deja que corra la lectura.
+							La webcam sirve para demo. Para cámara IP usa una URL HTTP/MJPEG o
+							snapshot accesible desde la misma red.
 						</CardDescription>
 					</CardHeader>
 					<CardContent className="space-y-4">
 						<div className="overflow-hidden rounded-2xl border bg-black">
-							<video
-								ref={videoRef}
-								className="aspect-video w-full object-cover"
-								muted
-								playsInline
-							/>
+							{draft.sourceType === "ip_camera" ? (
+								<img
+									ref={ipImageRef}
+									src={running ? draft.streamUrl : undefined}
+									alt="Vista de cámara IP"
+									crossOrigin="anonymous"
+									className="aspect-video w-full object-cover"
+								/>
+							) : (
+								<video
+									ref={videoRef}
+									className="aspect-video w-full object-cover"
+									muted
+									playsInline
+								/>
+							)}
 						</div>
 						<canvas ref={canvasRef} className="hidden" />
 						<div className="flex flex-wrap items-center gap-2">
 							<Button onClick={startCamera} disabled={running || !selected}>
-								<CameraIcon className="mr-2 h-4 w-4" />
-								Encender webcam
+								{draft.sourceType === "ip_camera" ? (
+									<NetworkIcon className="mr-2 h-4 w-4" />
+								) : (
+									<CameraIcon className="mr-2 h-4 w-4" />
+								)}
+								{draft.sourceType === "ip_camera"
+									? "Conectar cámara IP"
+									: "Encender webcam"}
 							</Button>
 							<Button
 								variant="outline"
@@ -595,6 +654,60 @@ export default function CamerasPage() {
 									setDraft((current) => ({ ...current, location: value }))
 								}
 							/>
+							<div className="grid gap-2">
+								<Label>Tipo de cámara</Label>
+								<div className="grid grid-cols-2 gap-2">
+									<Button
+										type="button"
+										variant={
+											draft.sourceType === "webcam" ? "default" : "outline"
+										}
+										onClick={() =>
+											setDraft((current) => ({
+												...current,
+												sourceType: "webcam",
+											}))
+										}
+									>
+										Webcam prueba
+									</Button>
+									<Button
+										type="button"
+										variant={
+											draft.sourceType === "ip_camera" ? "default" : "outline"
+										}
+										onClick={() =>
+											setDraft((current) => ({
+												...current,
+												sourceType: "ip_camera",
+											}))
+										}
+									>
+										Cámara IP
+									</Button>
+								</div>
+							</div>
+							{draft.sourceType === "ip_camera" ? (
+								<div className="space-y-2">
+									<LabeledInput
+										label="URL HTTP/MJPEG/snapshot"
+										value={draft.streamUrl}
+										placeholder="http://192.168.1.50/video o /snapshot.jpg"
+										onChange={(value) =>
+											setDraft((current) => ({
+												...current,
+												streamUrl: value,
+											}))
+										}
+									/>
+									<div className="rounded-xl border bg-muted/40 p-3 text-muted-foreground text-xs">
+										RTSP no corre directo en navegador. Para RTSP se necesita un
+										bridge local que convierta a HTTP/MJPEG/WebRTC. En Vercel,
+										una IP privada 192.168.x.x no es accesible desde el
+										servidor; debe correr un agente en la misma red.
+									</div>
+								</div>
+							) : null}
 							<LabeledInput
 								label="Modelo Roboflow"
 								value={draft.modelId}
@@ -647,6 +760,8 @@ export default function CamerasPage() {
 									saveCamera.mutate({
 										id: selected?.id,
 										...draft,
+										streamUrl:
+											draft.sourceType === "ip_camera" ? draft.streamUrl : null,
 									})
 								}
 								disabled={saveCamera.isPending}

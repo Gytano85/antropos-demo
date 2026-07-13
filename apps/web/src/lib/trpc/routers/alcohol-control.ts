@@ -13,6 +13,7 @@ type QueryResult<T> = T[] | { rows?: T[] };
 type BottleRow = {
 	id: number;
 	name: string;
+	scale_key: string | null;
 	ingredient_id: number | null;
 	empty_weight_g: number;
 	full_volume_ml: number;
@@ -61,6 +62,7 @@ export async function ensureAlcoholControlTables() {
 			id serial PRIMARY KEY,
 			user_uid varchar(255) NOT NULL,
 			name varchar(160) NOT NULL,
+			scale_key varchar(120),
 			ingredient_id integer,
 			empty_weight_g real NOT NULL DEFAULT 450,
 			full_volume_ml real NOT NULL DEFAULT 750,
@@ -90,6 +92,11 @@ export async function ensureAlcoholControlTables() {
 	for (const statement of statements) {
 		await db.execute(sql.raw(statement));
 	}
+	await db.execute(
+		sql.raw(
+			"ALTER TABLE bottle_scales ADD COLUMN IF NOT EXISTS scale_key varchar(120)",
+		),
+	);
 }
 
 async function ensureAlcoholDemo(userId: string) {
@@ -114,13 +121,13 @@ async function ensureAlcoholDemo(userId: string) {
 
 	await db.execute(sql`
 		INSERT INTO bottle_scales (
-			user_uid, name, ingredient_id, empty_weight_g, full_volume_ml,
+			user_uid, name, scale_key, ingredient_id, empty_weight_g, full_volume_ml,
 			density_g_ml, expected_used_ml, tolerance_ml, current_weight_g, last_reading_at
 		)
 		VALUES
-			(${userId}, 'Don Julio 70', ${ingredientId("Don Julio")}, 610, 700, 0.95, 135, 45, 1062.5, now()),
-			(${userId}, 'Buchanan''s 12', ${ingredientId("Buchanan")}, 650, 750, 0.94, 90, 45, 1214, now()),
-			(${userId}, 'Grey Goose', ${ingredientId("Grey Goose")}, 620, 750, 0.96, 220, 60, 1080.8, now())
+			(${userId}, 'Don Julio 70', 'scale-don-julio-70', ${ingredientId("Don Julio")}, 610, 700, 0.95, 135, 45, 1062.5, now()),
+			(${userId}, 'Buchanan''s 12', 'scale-buchanans-12', ${ingredientId("Buchanan")}, 650, 750, 0.94, 90, 45, 1214, now()),
+			(${userId}, 'Grey Goose', 'scale-grey-goose', ${ingredientId("Grey Goose")}, 620, 750, 0.96, 220, 60, 1080.8, now())
 	`);
 
 	const bottles = rows<BottleRow>(
@@ -211,6 +218,7 @@ export const alcoholControlRouter = router({
 			bottles: bottles.map((bottle, index) => ({
 				id: bottle.id,
 				name: bottle.name,
+				scaleKey: bottle.scale_key,
 				ingredientId: bottle.ingredient_id,
 				emptyWeightG: Number(bottle.empty_weight_g),
 				fullVolumeMl: Number(bottle.full_volume_ml),

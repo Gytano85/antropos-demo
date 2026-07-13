@@ -84,6 +84,36 @@ export default function AlcoholControlPage() {
 				</div>
 			</section>
 
+			<Card>
+				<CardHeader>
+					<CardTitle>Conexion real de bascula</CardTitle>
+					<CardDescription>
+						Una bascula con ESP32/Raspberry o cualquier puente HTTP manda el
+						peso bruto al sistema. La captura manual solo es para demo.
+					</CardDescription>
+				</CardHeader>
+				<CardContent className="grid gap-3 md:grid-cols-3">
+					<div className="rounded-2xl border bg-muted/40 p-4">
+						<div className="text-muted-foreground text-sm">Endpoint</div>
+						<code className="mt-2 block break-all text-sm">
+							POST /api/alcohol-control/scale-readings
+						</code>
+					</div>
+					<div className="rounded-2xl border bg-muted/40 p-4">
+						<div className="text-muted-foreground text-sm">Header</div>
+						<code className="mt-2 block break-all text-sm">
+							x-scale-token: dev-scale-token
+						</code>
+					</div>
+					<div className="rounded-2xl border bg-muted/40 p-4">
+						<div className="text-muted-foreground text-sm">Payload</div>
+						<code className="mt-2 block break-all text-sm">
+							{"{ scaleKey, weightG }"}
+						</code>
+					</div>
+				</CardContent>
+			</Card>
+
 			<div className="grid gap-4 md:grid-cols-4">
 				<Metric
 					icon={BeerIcon}
@@ -146,6 +176,9 @@ export default function AlcoholControlPage() {
 											<div className="text-muted-foreground text-xs">
 												{bottle.fullVolumeMl} ml · tolerancia{" "}
 												{bottle.toleranceMl} ml
+											</div>
+											<div className="text-muted-foreground text-xs">
+												Key: {bottle.scaleKey ?? `bottle-${bottle.id}`}
 											</div>
 										</TableCell>
 										<TableCell>
@@ -214,6 +247,9 @@ export default function AlcoholControlPage() {
 									<div className="mt-2 text-muted-foreground text-sm">
 										Tara {selected.emptyWeightG} g · llena{" "}
 										{selected.fullVolumeMl} ml
+									</div>
+									<div className="mt-1 text-muted-foreground text-xs">
+										scaleKey: {selected.scaleKey ?? `bottle-${selected.id}`}
 									</div>
 								</div>
 								<div className="space-y-2">

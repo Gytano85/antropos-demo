@@ -91,10 +91,14 @@ export const restockingSettings = pgTable("restocking_settings", {
 export const attendanceSettings = pgTable("attendance_settings", {
 	id: serial("id").primaryKey(),
 	user_uid: varchar("user_uid", { length: 255 }).notNull().unique(),
-	location_name: varchar("location_name", { length: 120 }).notNull().default("Antro"),
+	location_name: varchar("location_name", { length: 120 })
+		.notNull()
+		.default("Antro"),
 	latitude: real("latitude"),
 	longitude: real("longitude"),
-	allowed_radius_meters: integer("allowed_radius_meters").notNull().default(100),
+	allowed_radius_meters: integer("allowed_radius_meters")
+		.notNull()
+		.default(100),
 	require_location: boolean("require_location").notNull().default(false),
 	require_pin: boolean("require_pin").notNull().default(true),
 	qr_ttl_seconds: integer("qr_ttl_seconds").notNull().default(60),
@@ -123,7 +127,9 @@ export const employeeShifts = pgTable("employee_shifts", {
 	grace_minutes: integer("grace_minutes").notNull().default(10),
 	early_checkin_minutes: integer("early_checkin_minutes").notNull().default(30),
 	late_absence_minutes: integer("late_absence_minutes").notNull().default(90),
-	active_days: varchar("active_days", { length: 30 }).notNull().default("0,1,2,3,4,5,6"),
+	active_days: varchar("active_days", { length: 30 })
+		.notNull()
+		.default("0,1,2,3,4,5,6"),
 	created_at: timestamp("created_at").defaultNow(),
 	updated_at: timestamp("updated_at").defaultNow(),
 });
@@ -131,8 +137,12 @@ export const employeeShifts = pgTable("employee_shifts", {
 export const employeeShiftAssignments = pgTable("employee_shift_assignments", {
 	id: serial("id").primaryKey(),
 	user_uid: varchar("user_uid", { length: 255 }).notNull(),
-	employee_id: integer("employee_id").references(() => employees.id).notNull(),
-	shift_id: integer("shift_id").references(() => employeeShifts.id).notNull(),
+	employee_id: integer("employee_id")
+		.references(() => employees.id)
+		.notNull(),
+	shift_id: integer("shift_id")
+		.references(() => employeeShifts.id)
+		.notNull(),
 	shift_date: varchar("shift_date", { length: 10 }).notNull(),
 	expected_start_at: timestamp("expected_start_at").notNull(),
 	expected_end_at: timestamp("expected_end_at").notNull(),
@@ -153,8 +163,12 @@ export const attendanceQrTokens = pgTable("attendance_qr_tokens", {
 export const attendanceRecords = pgTable("attendance_records", {
 	id: serial("id").primaryKey(),
 	user_uid: varchar("user_uid", { length: 255 }).notNull(),
-	employee_id: integer("employee_id").references(() => employees.id).notNull(),
-	shift_assignment_id: integer("shift_assignment_id").references(() => employeeShiftAssignments.id),
+	employee_id: integer("employee_id")
+		.references(() => employees.id)
+		.notNull(),
+	shift_assignment_id: integer("shift_assignment_id").references(
+		() => employeeShiftAssignments.id,
+	),
 	check_in_at: timestamp("check_in_at"),
 	check_out_at: timestamp("check_out_at"),
 	check_in_status: varchar("check_in_status", { length: 40 }),
@@ -192,12 +206,17 @@ export const cameraDevices = pgTable("camera_devices", {
 	user_uid: varchar("user_uid", { length: 255 }).notNull(),
 	name: varchar("name", { length: 120 }).notNull(),
 	location: varchar("location", { length: 120 }).notNull().default("Entrada"),
-	source_type: varchar("source_type", { length: 30 }).notNull().default("webcam"),
+	source_type: varchar("source_type", { length: 30 })
+		.notNull()
+		.default("webcam"),
+	stream_url: text("stream_url"),
 	model_id: varchar("model_id", { length: 160 })
 		.notNull()
 		.default("security-camera-with-person/1"),
 	confidence_threshold: real("confidence_threshold").notNull().default(0.12),
-	check_interval_seconds: integer("check_interval_seconds").notNull().default(3),
+	check_interval_seconds: integer("check_interval_seconds")
+		.notNull()
+		.default(3),
 	no_person_timeout_seconds: integer("no_person_timeout_seconds")
 		.notNull()
 		.default(180),
@@ -212,7 +231,9 @@ export const cameraDevices = pgTable("camera_devices", {
 export const cameraPresenceEvents = pgTable("camera_presence_events", {
 	id: serial("id").primaryKey(),
 	user_uid: varchar("user_uid", { length: 255 }).notNull(),
-	camera_id: integer("camera_id").references(() => cameraDevices.id).notNull(),
+	camera_id: integer("camera_id")
+		.references(() => cameraDevices.id)
+		.notNull(),
 	person_count: integer("person_count").notNull().default(0),
 	confidence_avg: real("confidence_avg"),
 	status: varchar("status", { length: 40 }).notNull(),
@@ -223,7 +244,9 @@ export const cameraPresenceEvents = pgTable("camera_presence_events", {
 export const cameraAlerts = pgTable("camera_alerts", {
 	id: serial("id").primaryKey(),
 	user_uid: varchar("user_uid", { length: 255 }).notNull(),
-	camera_id: integer("camera_id").references(() => cameraDevices.id).notNull(),
+	camera_id: integer("camera_id")
+		.references(() => cameraDevices.id)
+		.notNull(),
 	type: varchar("type", { length: 60 }).notNull(),
 	message: text("message").notNull(),
 	status: varchar("status", { length: 30 }).notNull().default("open"),
