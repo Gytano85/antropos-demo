@@ -14,7 +14,6 @@ import {
 	CalendarCheckIcon,
 	CameraIcon,
 	CreditCardIcon,
-	CrosshairIcon,
 	DollarSignIcon,
 	LayoutDashboardIcon,
 	type LucideIcon,
@@ -72,7 +71,6 @@ const navItems: NavItem[] = [
 		icon: ScaleIcon,
 	},
 	{ href: "/admin/cameras", labelKey: "cameras", icon: CameraIcon },
-	{ href: "/admin/vision-ops", labelKey: "visionOps", icon: CrosshairIcon },
 	{ href: "/menu", labelKey: "digitalMenu", icon: BookOpenIcon },
 	{
 		href: "/admin/menu-engine",

@@ -35,6 +35,10 @@ type ReadingRow = {
 	created_at: Date | string | null;
 };
 
+type ExpectedUsageRow = {
+	expected_used_ml: string | number | null;
+};
+
 const saveBottleInput = z.object({
 	id: z.number().optional(),
 	name: z.string().min(1).max(160),
@@ -147,13 +151,14 @@ async function insertReading(
 	bottle: BottleRow,
 	weightG: number,
 ) {
+	const expectedUsedMl = await expectedUsageFromRecipes(userId, bottle);
 	const evaluation = evaluateBottleScale({
 		bottleName: bottle.name,
 		emptyBottleWeightG: Number(bottle.empty_weight_g),
 		fullVolumeMl: Number(bottle.full_volume_ml),
 		densityGPerMl: Number(bottle.density_g_ml),
 		currentWeightG: weightG,
-		expectedUsedMl: Number(bottle.expected_used_ml),
+		expectedUsedMl,
 		toleranceMl: Number(bottle.tolerance_ml),
 	});
 
@@ -178,6 +183,29 @@ async function insertReading(
 	return evaluation;
 }
 
+async function expectedUsageFromRecipes(userId: string, bottle: BottleRow) {
+	if (!bottle.ingredient_id) return Number(bottle.expected_used_ml);
+	try {
+		const row = rows<ExpectedUsageRow>(
+			await db.execute(sql`
+				SELECT COALESCE(SUM(order_items.quantity * recipe_items.quantity), 0) as expected_used_ml
+				FROM order_items
+				INNER JOIN orders ON order_items.order_id = orders.id
+				INNER JOIN recipes ON recipes.product_id = order_items.product_id
+				INNER JOIN recipe_items ON recipe_items.recipe_id = recipes.id
+				WHERE orders.user_uid = ${userId}
+					AND recipes.user_uid = ${userId}
+					AND recipe_items.ingredient_id = ${bottle.ingredient_id}
+					AND orders.created_at >= NOW() - INTERVAL '24 hours'
+			`),
+		)[0];
+		const expected = Number(row?.expected_used_ml ?? 0);
+		return expected > 0 ? expected : Number(bottle.expected_used_ml);
+	} catch {
+		return Number(bottle.expected_used_ml);
+	}
+}
+
 export const alcoholControlRouter = router({
 	overview: protectedProcedure.query(async ({ ctx }) => {
 		if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
@@ -198,20 +226,22 @@ export const alcoholControlRouter = router({
 		]);
 		const bottles = rows<BottleRow>(bottleResult);
 		const readings = rows<ReadingRow>(readingResult);
-		const evaluations = bottles.map((bottle) =>
-			evaluateBottleScale({
-				bottleName: bottle.name,
-				emptyBottleWeightG: Number(bottle.empty_weight_g),
-				fullVolumeMl: Number(bottle.full_volume_ml),
-				densityGPerMl: Number(bottle.density_g_ml),
-				currentWeightG: Number(
-					bottle.current_weight_g ??
-						Number(bottle.empty_weight_g) +
-							Number(bottle.full_volume_ml) * Number(bottle.density_g_ml),
-				),
-				expectedUsedMl: Number(bottle.expected_used_ml),
-				toleranceMl: Number(bottle.tolerance_ml),
-			}),
+		const evaluations = await Promise.all(
+			bottles.map(async (bottle) =>
+				evaluateBottleScale({
+					bottleName: bottle.name,
+					emptyBottleWeightG: Number(bottle.empty_weight_g),
+					fullVolumeMl: Number(bottle.full_volume_ml),
+					densityGPerMl: Number(bottle.density_g_ml),
+					currentWeightG: Number(
+						bottle.current_weight_g ??
+							Number(bottle.empty_weight_g) +
+								Number(bottle.full_volume_ml) * Number(bottle.density_g_ml),
+					),
+					expectedUsedMl: await expectedUsageFromRecipes(ctx.user.id, bottle),
+					toleranceMl: Number(bottle.tolerance_ml),
+				}),
+			),
 		);
 
 		return {

@@ -79,9 +79,12 @@ export default function CamerasPage() {
 	const canvasRef = useRef<HTMLCanvasElement | null>(null);
 	const streamRef = useRef<MediaStream | null>(null);
 	const previousFrameRef = useRef<Uint8ClampedArray | null>(null);
+	const baselineFrameRef = useRef<Uint8ClampedArray | null>(null);
 	const [selectedId, setSelectedId] = useState<number | null>(null);
 	const [running, setRunning] = useState(false);
 	const [cameraError, setCameraError] = useState<string | null>(null);
+	const [calibrated, setCalibrated] = useState(false);
+	const [occupancyScore, setOccupancyScore] = useState(0);
 	const [detection, setDetection] = useState<DetectionResult | null>(null);
 	const [stablePresence, setStablePresence] = useState({
 		personCount: 0,
@@ -268,6 +271,67 @@ export default function CamerasPage() {
 		return Math.round((changed / total) * 100) / 100;
 	}, []);
 
+	const captureReducedFrame = useCallback((canvas: HTMLCanvasElement) => {
+		const sampleCanvas = document.createElement("canvas");
+		sampleCanvas.width = 96;
+		sampleCanvas.height = 54;
+		const sampleContext = sampleCanvas.getContext("2d", {
+			willReadFrequently: true,
+		});
+		if (!sampleContext) return null;
+		sampleContext.drawImage(
+			canvas,
+			0,
+			0,
+			sampleCanvas.width,
+			sampleCanvas.height,
+		);
+		return new Uint8ClampedArray(
+			sampleContext.getImageData(0, 0, sampleCanvas.width, sampleCanvas.height)
+				.data,
+		);
+	}, []);
+
+	const measureOccupancyAgainstBaseline = useCallback(
+		(canvas: HTMLCanvasElement) => {
+			const current = captureReducedFrame(canvas);
+			const baseline = baselineFrameRef.current;
+			if (!current || !baseline || current.length !== baseline.length) return 0;
+
+			let changed = 0;
+			const total = current.length / 4;
+			for (let index = 0; index < current.length; index += 4) {
+				const currentLum =
+					(current[index] ?? 0) * 0.299 +
+					(current[index + 1] ?? 0) * 0.587 +
+					(current[index + 2] ?? 0) * 0.114;
+				const baselineLum =
+					(baseline[index] ?? 0) * 0.299 +
+					(baseline[index + 1] ?? 0) * 0.587 +
+					(baseline[index + 2] ?? 0) * 0.114;
+				if (Math.abs(currentLum - baselineLum) > 24) changed += 1;
+			}
+			return Math.round((changed / total) * 100) / 100;
+		},
+		[captureReducedFrame],
+	);
+
+	const calibrateEmptyStation = useCallback(() => {
+		if (!canvasRef.current) {
+			setCameraError("Primero enciende la camara y espera a que haya imagen.");
+			return;
+		}
+		const frame = captureReducedFrame(canvasRef.current);
+		if (!frame) {
+			setCameraError("No se pudo capturar referencia del puesto.");
+			return;
+		}
+		baselineFrameRef.current = frame;
+		setCalibrated(true);
+		setCameraError(null);
+		toast.success("Puesto vacio calibrado.");
+	}, [captureReducedFrame]);
+
 	const sampleFromCounts = useCallback(
 		({
 			personCount,
@@ -349,6 +413,37 @@ export default function CamerasPage() {
 			);
 			const imageDataUrl = canvas.toDataURL("image/jpeg", 0.9);
 			const motionScore = measureMotionScore(canvas);
+			const baselineOccupancy = measureOccupancyAgainstBaseline(canvas);
+			setOccupancyScore(baselineOccupancy);
+
+			if (calibrated) {
+				const sample = sampleFromCounts({
+					personCount: baselineOccupancy >= 0.12 ? 1 : 0,
+					confidence:
+						baselineOccupancy >= 0.12
+							? Math.min(1, baselineOccupancy * 3)
+							: null,
+					source: baselineOccupancy >= 0.12 ? "motion" : "none",
+					motionScore: Math.max(motionScore, baselineOccupancy),
+				});
+				const stable = stabilizePresence(sample);
+				const result: DetectionResult = {
+					configured: true,
+					personCount: stable.personCount,
+					confidenceAvg: stable.personCount > 0 ? stable.score : null,
+					message:
+						"Metodo principal: puesto fijo calibrado. Compara la imagen actual contra el puesto vacio.",
+					predictions: [],
+				};
+				setDetection(result);
+				recordObservation.mutate({
+					cameraId: selected.id,
+					personCount: stable.personCount,
+					confidenceAvg: result.confidenceAvg,
+					status: stable.personCount > 0 ? "person_detected" : "empty",
+				});
+				return;
+			}
 
 			if (window.FaceDetector) {
 				const detector = new window.FaceDetector({
@@ -449,6 +544,8 @@ export default function CamerasPage() {
 		}
 	}, [
 		busy,
+		calibrated,
+		measureOccupancyAgainstBaseline,
 		draft.sourceType,
 		measureMotionScore,
 		recordObservation,
@@ -491,8 +588,9 @@ export default function CamerasPage() {
 							<h1 className="font-bold text-2xl">Camara de presencia</h1>
 						</div>
 						<p className="mt-1 text-muted-foreground text-sm">
-							Conecta una cámara IP de la misma red o usa la webcam como modo
-							prueba. El objetivo es presencia en puesto, no vigilancia de robo.
+							Un solo modulo: presencia en puesto. El metodo principal es
+							calibrar el puesto vacio y detectar ocupacion estable; Roboflow
+							queda como respaldo, no como base.
 						</p>
 					</div>
 					<Badge
@@ -594,6 +692,31 @@ export default function CamerasPage() {
 								<RefreshCwIcon className="mr-2 h-4 w-4" />
 								Analizar ahora
 							</Button>
+							<Button
+								variant="secondary"
+								onClick={calibrateEmptyStation}
+								disabled={!running}
+							>
+								Calibrar puesto vacio
+							</Button>
+						</div>
+						<div className="grid gap-2 rounded-xl border bg-muted/40 p-3 text-sm sm:grid-cols-3">
+							<div>
+								<div className="text-muted-foreground">Metodo</div>
+								<div className="font-medium">
+									{calibrated ? "Puesto fijo calibrado" : "Sin calibrar"}
+								</div>
+							</div>
+							<div>
+								<div className="text-muted-foreground">Ocupacion visual</div>
+								<div className="font-medium">
+									{Math.round(occupancyScore * 100)}%
+								</div>
+							</div>
+							<div>
+								<div className="text-muted-foreground">Regla</div>
+								<div className="font-medium">2+ muestras / 15s</div>
+							</div>
 						</div>
 						{cameraError && (
 							<div className="rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-destructive text-sm">

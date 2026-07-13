@@ -28,11 +28,24 @@ import {
 	ShieldAlertIcon,
 } from "lucide-react";
 import type React from "react";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useTRPC } from "@/lib/trpc/client";
 
 type BottleStatus = "ok" | "review" | "critical";
+
+type SerialPort = {
+	open: (options: { baudRate: number }) => Promise<void>;
+	readable?: ReadableStream<Uint8Array>;
+};
+
+declare global {
+	interface Navigator {
+		serial: {
+			requestPort: () => Promise<SerialPort>;
+		};
+	}
+}
 
 export default function AlcoholControlPage() {
 	const trpc = useTRPC();
@@ -42,6 +55,8 @@ export default function AlcoholControlPage() {
 	);
 	const bottles = data?.bottles ?? [];
 	const [selectedId, setSelectedId] = useState<number | null>(null);
+	const serialPortRef = useRef<SerialPort | null>(null);
+	const [usbStatus, setUsbStatus] = useState("Sin conectar");
 	const selected = useMemo(
 		() => bottles.find((bottle) => bottle.id === selectedId) ?? bottles[0],
 		[bottles, selectedId],
@@ -88,8 +103,9 @@ export default function AlcoholControlPage() {
 				<CardHeader>
 					<CardTitle>Conexion real de bascula</CardTitle>
 					<CardDescription>
-						Una bascula con ESP32/Raspberry o cualquier puente HTTP manda el
-						peso bruto al sistema. La captura manual solo es para demo.
+						Una bascula puede conectarse por USB directo al navegador con Web
+						Serial o por HTTP desde ESP32/Raspberry. La captura manual solo es
+						para demo.
 					</CardDescription>
 				</CardHeader>
 				<CardContent className="grid gap-3 md:grid-cols-3">
@@ -106,9 +122,9 @@ export default function AlcoholControlPage() {
 						</code>
 					</div>
 					<div className="rounded-2xl border bg-muted/40 p-4">
-						<div className="text-muted-foreground text-sm">Payload</div>
+						<div className="text-muted-foreground text-sm">USB</div>
 						<code className="mt-2 block break-all text-sm">
-							{"{ scaleKey, weightG }"}
+							Web Serial: envia lineas tipo 1062.5
 						</code>
 					</div>
 				</CardContent>
@@ -273,6 +289,61 @@ export default function AlcoholControlPage() {
 									<ScaleIcon className="mr-2 h-4 w-4" />
 									Guardar lectura
 								</Button>
+								<Button
+									type="button"
+									variant="outline"
+									className="w-full"
+									onClick={async () => {
+										if (!selected) return;
+										if (!("serial" in navigator)) {
+											toast.error("Este navegador no soporta Web Serial.");
+											return;
+										}
+										try {
+											const port = await navigator.serial.requestPort();
+											await port.open({ baudRate: 9600 });
+											serialPortRef.current = port;
+											setUsbStatus("USB conectado. Esperando peso...");
+											const reader = port.readable
+												?.pipeThrough(new TextDecoderStream())
+												.getReader();
+											if (!reader) throw new Error("No se pudo leer USB.");
+
+											let buffer = "";
+											while (serialPortRef.current === port) {
+												const { value, done } = await reader.read();
+												if (done) break;
+												buffer += value;
+												const lines = buffer.split(/\r?\n/);
+												buffer = lines.pop() ?? "";
+												for (const line of lines) {
+													const match = line.match(/-?\d+(\.\d+)?/);
+													if (!match) continue;
+													const weightG = Number(match[0]);
+													setWeightDraft(String(weightG));
+													recordReading.mutate({
+														bottleId: selected.id,
+														weightG,
+													});
+													setUsbStatus(`Ultimo peso USB: ${weightG} g`);
+													return;
+												}
+											}
+										} catch (error) {
+											setUsbStatus("USB desconectado/error.");
+											toast.error(
+												error instanceof Error
+													? error.message
+													: "No se pudo leer la bascula USB.",
+											);
+										}
+									}}
+								>
+									Conectar bascula USB
+								</Button>
+								<div className="rounded-xl border bg-muted/40 p-3 text-muted-foreground text-xs">
+									{usbStatus}
+								</div>
 								<div className="rounded-2xl border p-4 text-sm">
 									<div className="font-medium">Cómo se calcula</div>
 									<div className="mt-1 text-muted-foreground">
