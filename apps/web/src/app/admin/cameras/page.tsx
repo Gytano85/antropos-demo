@@ -145,7 +145,7 @@ export default function CamerasPage() {
 				await queryClient.invalidateQueries(
 					trpc.cameras.overview.queryOptions(),
 				);
-				toast.success("Camara guardada.");
+				toast.success("Cámara guardada.");
 			},
 			onError: (error) => toast.error(error.message),
 		}),
@@ -175,11 +175,11 @@ export default function CamerasPage() {
 		setCameraError(null);
 		if (draft.sourceType === "ip_camera") {
 			if (!draft.streamUrl.trim()) {
-				setCameraError("Agrega la URL HTTP/MJPEG/snapshot de la camara IP.");
+				setCameraError("Agrega la URL HTTP/MJPEG/snapshot de la cámara IP.");
 				return;
 			}
 			setRunning(true);
-			toast.success("Camara IP activada para prueba.");
+			toast.success("Cámara IP activada.");
 			return;
 		}
 		try {
@@ -197,10 +197,10 @@ export default function CamerasPage() {
 				await videoRef.current.play();
 			}
 			setRunning(true);
-			toast.success("Camara encendida.");
+			toast.success("Cámara encendida.");
 		} catch (error) {
 			const message =
-				error instanceof Error ? error.message : "No se pudo abrir la camara.";
+				error instanceof Error ? error.message : "No se pudo abrir la cámara.";
 			setCameraError(message);
 			recordObservation.mutate({
 				cameraId: selected.id,
@@ -318,7 +318,7 @@ export default function CamerasPage() {
 
 	const calibrateEmptyStation = useCallback(() => {
 		if (!canvasRef.current) {
-			setCameraError("Primero enciende la camara y espera a que haya imagen.");
+			setCameraError("Primero enciende la cámara y espera a que haya imagen.");
 			return;
 		}
 		const frame = captureReducedFrame(canvasRef.current);
@@ -329,7 +329,7 @@ export default function CamerasPage() {
 		baselineFrameRef.current = frame;
 		setCalibrated(true);
 		setCameraError(null);
-		toast.success("Puesto vacio calibrado.");
+		toast.success("Puesto vacío calibrado.");
 	}, [captureReducedFrame]);
 
 	const sampleFromCounts = useCallback(
@@ -386,7 +386,7 @@ export default function CamerasPage() {
 		}
 		if (isIpCamera && (!ipImage?.complete || ipImage.naturalWidth === 0)) {
 			setCameraError(
-				"No se pudo leer la imagen de la camara IP. En navegador normalmente necesitas URL HTTP/MJPEG con CORS o un bridge local.",
+				"No se pudo leer la imagen de la cámara IP. En navegador normalmente necesitas URL HTTP/MJPEG con CORS o un bridge local.",
 			);
 			return;
 		}
@@ -432,7 +432,7 @@ export default function CamerasPage() {
 					personCount: stable.personCount,
 					confidenceAvg: stable.personCount > 0 ? stable.score : null,
 					message:
-						"Metodo principal: puesto fijo calibrado. Compara la imagen actual contra el puesto vacio.",
+						"Método principal: puesto fijo calibrado. Compara la imagen actual contra el puesto vacío.",
 					predictions: [],
 				};
 				setDetection(result);
@@ -585,26 +585,26 @@ export default function CamerasPage() {
 					<div>
 						<div className="flex items-center gap-2">
 							<CameraIcon className="h-6 w-6 text-primary" />
-							<h1 className="font-bold text-2xl">Camara de presencia</h1>
+							<h1 className="font-bold text-2xl">Presencia en puesto</h1>
 						</div>
 						<p className="mt-1 text-muted-foreground text-sm">
-							Un solo modulo: presencia en puesto. El metodo principal es
-							calibrar el puesto vacio y detectar ocupacion estable; Roboflow
-							queda como respaldo, no como base.
+							Un solo módulo de cámaras: calibra el puesto vacío y detecta
+							presencia estable. No depende de servicios externos para
+							funcionar.
 						</p>
 					</div>
 					<Badge
 						variant={data?.inferenceConfigured ? "default" : "destructive"}
 					>
 						{data?.inferenceConfigured
-							? "Roboflow configurado"
-							: "Falta ROBOFLOW_API_KEY"}
+							? "Respaldo cloud activo"
+							: "Método local activo"}
 					</Badge>
 				</div>
 			</div>
 
 			<div className="grid gap-4 md:grid-cols-4">
-				<Metric icon={CameraIcon} label="Camaras" value={devices.length} />
+				<Metric icon={CameraIcon} label="Cámaras" value={devices.length} />
 				<Metric
 					icon={UsersIcon}
 					label="Personas ahora"
@@ -622,7 +622,7 @@ export default function CamerasPage() {
 				/>
 				<Metric
 					icon={EyeIcon}
-					label="Ultima deteccion"
+					label="Última detección"
 					value={
 						selected?.lastSeenAt
 							? new Date(selected.lastSeenAt).toLocaleTimeString()
@@ -697,18 +697,18 @@ export default function CamerasPage() {
 								onClick={calibrateEmptyStation}
 								disabled={!running}
 							>
-								Calibrar puesto vacio
+								Calibrar puesto vacío
 							</Button>
 						</div>
 						<div className="grid gap-2 rounded-xl border bg-muted/40 p-3 text-sm sm:grid-cols-3">
 							<div>
-								<div className="text-muted-foreground">Metodo</div>
+								<div className="text-muted-foreground">Método</div>
 								<div className="font-medium">
 									{calibrated ? "Puesto fijo calibrado" : "Sin calibrar"}
 								</div>
 							</div>
 							<div>
-								<div className="text-muted-foreground">Ocupacion visual</div>
+								<div className="text-muted-foreground">Ocupación visual</div>
 								<div className="font-medium">
 									{Math.round(occupancyScore * 100)}%
 								</div>
@@ -734,14 +734,14 @@ export default function CamerasPage() {
 
 				<Card>
 					<CardHeader>
-						<CardTitle>Configuracion</CardTitle>
+						<CardTitle>Configuración</CardTitle>
 						<CardDescription>
-							La regla principal es el tiempo permitido sin detectar personas.
+							Configura la fuente de video y el tiempo permitido sin presencia.
 						</CardDescription>
 					</CardHeader>
 					<CardContent className="space-y-4">
 						<div className="space-y-2">
-							<Label>Camara</Label>
+							<Label>Cámara</Label>
 							<div className="grid gap-2">
 								{devices.map((device) => (
 									<button
@@ -771,7 +771,7 @@ export default function CamerasPage() {
 								}
 							/>
 							<LabeledInput
-								label="Ubicacion"
+								label="Ubicación"
 								value={draft.location}
 								onChange={(value) =>
 									setDraft((current) => ({ ...current, location: value }))
@@ -831,28 +831,7 @@ export default function CamerasPage() {
 									</div>
 								</div>
 							) : null}
-							<LabeledInput
-								label="Modelo Roboflow"
-								value={draft.modelId}
-								onChange={(value) =>
-									setDraft((current) => ({ ...current, modelId: value }))
-								}
-							/>
 							<div className="grid grid-cols-2 gap-3">
-								<LabeledInput
-									label="Confianza"
-									type="number"
-									step="0.01"
-									min="0.05"
-									max="0.95"
-									value={String(draft.confidenceThreshold)}
-									onChange={(value) =>
-										setDraft((current) => ({
-											...current,
-											confidenceThreshold: Number(value),
-										}))
-									}
-								/>
 								<LabeledInput
 									label="Intervalo seg."
 									type="number"
@@ -867,7 +846,7 @@ export default function CamerasPage() {
 								/>
 							</div>
 							<LabeledInput
-								label="Alerta sin personas seg."
+								label="Alerta sin presencia en segundos"
 								type="number"
 								min="30"
 								value={String(draft.noPersonTimeoutSeconds)}
@@ -890,7 +869,7 @@ export default function CamerasPage() {
 								disabled={saveCamera.isPending}
 							>
 								<SaveIcon className="mr-2 h-4 w-4" />
-								Guardar configuracion
+								Guardar configuración
 							</Button>
 						</div>
 					</CardContent>
@@ -902,8 +881,8 @@ export default function CamerasPage() {
 					<CardHeader>
 						<CardTitle>Alertas</CardTitle>
 						<CardDescription>
-							Aqui queda el rastro cuando la camara deja de ver personas, falla
-							o no tiene modelo.
+							Aquí queda el rastro cuando el puesto queda sin presencia o la
+							cámara falla.
 						</CardDescription>
 					</CardHeader>
 					<CardContent>
@@ -943,7 +922,7 @@ export default function CamerasPage() {
 											colSpan={3}
 											className="text-center text-muted-foreground"
 										>
-											Sin alertas todavia.
+											Sin alertas todavía.
 										</TableCell>
 									</TableRow>
 								)}
@@ -956,8 +935,7 @@ export default function CamerasPage() {
 					<CardHeader>
 						<CardTitle>Lecturas recientes</CardTitle>
 						<CardDescription>
-							Muestras guardadas por la webcam para comprobar que el modulo esta
-							trabajando.
+							Muestras guardadas para comprobar que el módulo está trabajando.
 						</CardDescription>
 					</CardHeader>
 					<CardContent>
@@ -993,7 +971,7 @@ export default function CamerasPage() {
 											colSpan={4}
 											className="text-center text-muted-foreground"
 										>
-											Enciende la webcam para empezar a registrar lecturas.
+											Enciende la cámara para empezar a registrar lecturas.
 										</TableCell>
 									</TableRow>
 								)}
@@ -1088,9 +1066,10 @@ function DetectionStatus({
 			<div className="flex items-start gap-2 rounded-xl border border-amber-300 bg-amber-50 p-3 text-amber-900 text-sm">
 				<AlertTriangleIcon className="mt-0.5 h-4 w-4" />
 				<div>
-					<div className="font-medium">Modelo no configurado</div>
+					<div className="font-medium">Calibracion pendiente</div>
 					<div>
-						Agrega ROBOFLOW_API_KEY para activar deteccion real de personas.
+						Enciende la camara y calibra el puesto vacio para activar la
+						deteccion local.
 					</div>
 				</div>
 			</div>
@@ -1100,7 +1079,8 @@ function DetectionStatus({
 	if (!result) {
 		return (
 			<div className="rounded-xl border bg-muted p-3 text-muted-foreground text-sm">
-				Aun no hay lectura. Enciende la webcam o analiza manualmente.
+				Aun no hay lectura. Enciende la camara, calibra el puesto vacio y
+				analiza manualmente.
 			</div>
 		);
 	}
@@ -1110,7 +1090,7 @@ function DetectionStatus({
 			<div className="flex items-start gap-2 rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-destructive text-sm">
 				<AlertTriangleIcon className="mt-0.5 h-4 w-4" />
 				<div>
-					<div className="font-medium">Error de deteccion</div>
+					<div className="font-medium">Error de detección</div>
 					<div>{result.error}</div>
 				</div>
 			</div>
@@ -1147,7 +1127,7 @@ function DetectionStatus({
 				<div>Frame actual: {stablePresence.rawPersonCount}</div>
 				<div>Lectura usada: {stablePresence.personCount}</div>
 				<div>
-					Ultimo positivo:{" "}
+					Último positivo:{" "}
 					{stablePresence.lastPositiveAt
 						? new Date(stablePresence.lastPositiveAt).toLocaleTimeString()
 						: "-"}
@@ -1162,7 +1142,7 @@ function readableStatus(status: string) {
 		person_detected: "Persona detectada",
 		empty: "Sin personas",
 		presence_error: "Sin presencia",
-		camera_error: "Error camara",
+		camera_error: "Error de cámara",
 		model_not_configured: "Sin modelo",
 	};
 	return labels[status] ?? status;

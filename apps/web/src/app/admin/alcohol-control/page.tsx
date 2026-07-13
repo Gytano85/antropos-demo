@@ -36,6 +36,7 @@ type BottleStatus = "ok" | "review" | "critical";
 
 type SerialPort = {
 	open: (options: { baudRate: number }) => Promise<void>;
+	close?: () => Promise<void>;
 	readable?: ReadableStream<Uint8Array>;
 };
 
@@ -57,6 +58,7 @@ export default function AlcoholControlPage() {
 	const [selectedId, setSelectedId] = useState<number | null>(null);
 	const serialPortRef = useRef<SerialPort | null>(null);
 	const [usbStatus, setUsbStatus] = useState("Sin conectar");
+	const [usbConnected, setUsbConnected] = useState(false);
 	const selected = useMemo(
 		() => bottles.find((bottle) => bottle.id === selectedId) ?? bottles[0],
 		[bottles, selectedId],
@@ -91,8 +93,8 @@ export default function AlcoholControlPage() {
 							<h1 className="font-bold text-3xl">Control de alcohol</h1>
 						</div>
 						<p className="mt-2 max-w-3xl text-muted-foreground">
-							Básculas por botella: compara consumo físico contra ventas,
-							recetas y tolerancia configurada. No intenta adivinar con cámara.
+							Basculas por botella: compara consumo fisico contra ventas,
+							recetas y tolerancia configurada. No intenta adivinar con camara.
 						</p>
 					</div>
 					<Badge variant="outline">demo con lecturas manuales</Badge>
@@ -103,9 +105,8 @@ export default function AlcoholControlPage() {
 				<CardHeader>
 					<CardTitle>Conexion real de bascula</CardTitle>
 					<CardDescription>
-						Una bascula puede conectarse por USB directo al navegador con Web
-						Serial o por HTTP desde ESP32/Raspberry. La captura manual solo es
-						para demo.
+						Conecta por USB directo al navegador con Web Serial, o por HTTP
+						desde ESP32/Raspberry. La captura manual solo es para demo.
 					</CardDescription>
 				</CardHeader>
 				<CardContent className="grid gap-3 md:grid-cols-3">
@@ -138,12 +139,12 @@ export default function AlcoholControlPage() {
 				/>
 				<Metric
 					icon={ShieldAlertIcon}
-					label="En revisión"
+					label="En revision"
 					value={data?.summary.reviewCount ?? 0}
 				/>
 				<Metric
 					icon={AlertTriangleIcon}
-					label="Críticas"
+					label="Criticas"
 					value={data?.summary.criticalCount ?? 0}
 				/>
 				<Metric
@@ -156,9 +157,10 @@ export default function AlcoholControlPage() {
 			<div className="grid gap-6 xl:grid-cols-[1.3fr_0.7fr]">
 				<Card>
 					<CardHeader>
-						<CardTitle>Botellas en báscula</CardTitle>
+						<CardTitle>Botellas en bascula</CardTitle>
 						<CardDescription>
-							La lectura física se compara con el consumo esperado por POS.
+							La lectura fisica se compara con el consumo esperado por recetas y
+							ventas.
 						</CardDescription>
 					</CardHeader>
 					<CardContent>
@@ -167,7 +169,7 @@ export default function AlcoholControlPage() {
 								<TableRow>
 									<TableHead>Botella</TableHead>
 									<TableHead>Restante</TableHead>
-									<TableHead>Físico</TableHead>
+									<TableHead>Fisico</TableHead>
 									<TableHead>Esperado</TableHead>
 									<TableHead>Diferencia</TableHead>
 									<TableHead>Estado</TableHead>
@@ -251,7 +253,7 @@ export default function AlcoholControlPage() {
 					<CardHeader>
 						<CardTitle>Registrar lectura</CardTitle>
 						<CardDescription>
-							Para demo: escribe el peso bruto que enviaría la báscula.
+							Para demo: escribe el peso bruto o conecta una bascula USB.
 						</CardDescription>
 					</CardHeader>
 					<CardContent className="space-y-4">
@@ -293,6 +295,7 @@ export default function AlcoholControlPage() {
 									type="button"
 									variant="outline"
 									className="w-full"
+									disabled={usbConnected}
 									onClick={async () => {
 										if (!selected) return;
 										if (!("serial" in navigator)) {
@@ -303,6 +306,7 @@ export default function AlcoholControlPage() {
 											const port = await navigator.serial.requestPort();
 											await port.open({ baudRate: 9600 });
 											serialPortRef.current = port;
+											setUsbConnected(true);
 											setUsbStatus("USB conectado. Esperando peso...");
 											const reader = port.readable
 												?.pipeThrough(new TextDecoderStream())
@@ -326,10 +330,11 @@ export default function AlcoholControlPage() {
 														weightG,
 													});
 													setUsbStatus(`Ultimo peso USB: ${weightG} g`);
-													return;
 												}
 											}
 										} catch (error) {
+											serialPortRef.current = null;
+											setUsbConnected(false);
 											setUsbStatus("USB desconectado/error.");
 											toast.error(
 												error instanceof Error
@@ -339,16 +344,33 @@ export default function AlcoholControlPage() {
 										}
 									}}
 								>
-									Conectar bascula USB
+									{usbConnected
+										? "Leyendo bascula USB"
+										: "Conectar bascula USB"}
+								</Button>
+								<Button
+									type="button"
+									variant="ghost"
+									className="w-full"
+									disabled={!usbConnected}
+									onClick={async () => {
+										const port = serialPortRef.current;
+										serialPortRef.current = null;
+										setUsbConnected(false);
+										setUsbStatus("USB desconectado.");
+										await port?.close?.();
+									}}
+								>
+									Desconectar USB
 								</Button>
 								<div className="rounded-xl border bg-muted/40 p-3 text-muted-foreground text-xs">
 									{usbStatus}
 								</div>
 								<div className="rounded-2xl border p-4 text-sm">
-									<div className="font-medium">Cómo se calcula</div>
+									<div className="font-medium">Como se calcula</div>
 									<div className="mt-1 text-muted-foreground">
 										Volumen restante = (peso actual - tara) / densidad. Luego
-										compara lo usado contra lo que debería haberse usado por
+										compara lo usado contra lo que deberia haberse usado por
 										recetas/ventas.
 									</div>
 								</div>
@@ -376,7 +398,7 @@ export default function AlcoholControlPage() {
 								<TableHead>Hora</TableHead>
 								<TableHead>Botella</TableHead>
 								<TableHead>Peso</TableHead>
-								<TableHead>Físico</TableHead>
+								<TableHead>Fisico</TableHead>
 								<TableHead>Diferencia</TableHead>
 								<TableHead>Estado</TableHead>
 							</TableRow>
@@ -451,7 +473,7 @@ function StatusBadge({ status }: { status: BottleStatus }) {
 		return (
 			<Badge variant="destructive" className="gap-1">
 				<AlertTriangleIcon className="h-3 w-3" />
-				Crítico
+				Critico
 			</Badge>
 		);
 	}

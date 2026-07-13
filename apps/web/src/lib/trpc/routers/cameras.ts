@@ -355,7 +355,7 @@ function alertMessage(type: string, cameraName: string) {
 	if (type === "camera_error")
 		return `${cameraName}: no se pudo leer la camara.`;
 	if (type === "model_not_configured") {
-		return `${cameraName}: falta configurar ROBOFLOW_API_KEY para deteccion real.`;
+		return `${cameraName}: calibra el puesto vacio para activar deteccion local.`;
 	}
-	return `${cameraName}: no se detectaron personas dentro del tiempo configurado.`;
+	return `${cameraName}: no hay presencia dentro del tiempo configurado.`;
 }
