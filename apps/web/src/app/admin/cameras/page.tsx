@@ -124,6 +124,10 @@ export default function CamerasPage() {
 	const barTracksRef = useRef<ObjectTrack[]>([]);
 	const [barEvents, setBarEvents] = useState<BarExitEvent[]>([]);
 	const [barDetectionCount, setBarDetectionCount] = useState(0);
+	const lastBarModelAtRef = useRef(0);
+	const lastModelCandidatesRef = useRef<
+		Array<NonNullable<ReturnType<typeof classifyBarCandidate>>>
+	>([]);
 	const [enabledBarItems, setEnabledBarItems] = useState<
 		Record<BarItemType, boolean>
 	>({
@@ -390,6 +394,94 @@ export default function CamerasPage() {
 		[countingDirection, countingLine, mode],
 	);
 
+	const processBarExitFrame = useCallback(
+		async (canvas: HTMLCanvasElement) => {
+			if (!selected) return;
+			const now = Date.now();
+			const motionCandidates = enabledBarItems.plate
+				? detectMovingServedObjects(
+						canvas,
+						motionCanvasRef,
+						previousBarFrameRef,
+					)
+				: [];
+
+			if (objectDetectorRef.current && now - lastBarModelAtRef.current > 900) {
+				lastBarModelAtRef.current = now;
+				const predictions = await objectDetectorRef.current.detect(
+					canvas,
+					30,
+					0.25,
+				);
+				lastModelCandidatesRef.current = predictions
+					.map((prediction) =>
+						classifyBarCandidate({
+							class: prediction.class,
+							score: prediction.score,
+							bbox: prediction.bbox,
+						}),
+					)
+					.filter((candidate): candidate is NonNullable<typeof candidate> =>
+						Boolean(candidate && enabledBarItems[candidate.type]),
+					);
+			} else if (
+				!objectDetectorRef.current &&
+				detectorStatus !== "loading" &&
+				detectorStatus !== "error"
+			) {
+				void getObjectDetector().catch(() => undefined);
+			}
+
+			const candidates = mergeBarCandidates([
+				...motionCandidates,
+				...lastModelCandidatesRef.current,
+			]);
+			setBarDetectionCount(candidates.length);
+			const tracked = updateObjectTracks(barTracksRef.current, candidates, {
+				now,
+				line: lineToCanvas(countingLine, canvas),
+				direction: countingDirection,
+				minHits: 1,
+				maxMisses: 14,
+				matchDistance: Math.max(canvas.width, canvas.height) * 0.32,
+			});
+			barTracksRef.current = tracked.tracks;
+			setBarTracks(tracked.tracks);
+			if (tracked.events.length > 0) {
+				setBarEvents((current) => [...tracked.events, ...current].slice(0, 20));
+				for (const event of tracked.events) {
+					recordBarExit.mutate({
+						cameraId: selected.id,
+						trackId: event.trackId,
+						itemType: event.type,
+						confidenceAvg: event.confidence,
+						direction: event.direction,
+						zone: draft.location || "Barra",
+					});
+				}
+			}
+			drawDetections(canvas, [], tracked.tracks);
+			setDetection({
+				configured: true,
+				personCount: 0,
+				confidenceAvg: null,
+				message:
+					"Conteo de salida de barra activo: tracking rápido por movimiento con apoyo del modelo local.",
+			});
+		},
+		[
+			countingDirection,
+			countingLine,
+			detectorStatus,
+			drawDetections,
+			draft.location,
+			enabledBarItems,
+			getObjectDetector,
+			recordBarExit,
+			selected,
+		],
+	);
+
 	const detectOnce = useCallback(async () => {
 		if (!selected || !canvasRef.current || busy) return;
 		const isIpCamera = draft.sourceType === "ip_camera";
@@ -428,68 +520,13 @@ export default function CamerasPage() {
 				canvas.width,
 				canvas.height,
 			);
+			if (mode === "bar_exit") {
+				await processBarExitFrame(canvas);
+				return;
+			}
 			try {
 				const detector = await getObjectDetector();
 				const predictions = await detector.detect(canvas, 20, 0.35);
-				if (mode === "bar_exit") {
-					const modelCandidates = predictions
-						.map((prediction) =>
-							classifyBarCandidate({
-								class: prediction.class,
-								score: prediction.score,
-								bbox: prediction.bbox,
-							}),
-						)
-						.filter((candidate): candidate is NonNullable<typeof candidate> =>
-							Boolean(candidate && enabledBarItems[candidate.type]),
-						);
-					const motionCandidates = enabledBarItems.plate
-						? detectMovingServedObjects(
-								canvas,
-								motionCanvasRef,
-								previousBarFrameRef,
-							)
-						: [];
-					const candidates = mergeBarCandidates([
-						...modelCandidates,
-						...motionCandidates,
-					]);
-					setBarDetectionCount(candidates.length);
-					const tracked = updateObjectTracks(barTracksRef.current, candidates, {
-						now: Date.now(),
-						line: lineToCanvas(countingLine, canvas),
-						direction: countingDirection,
-						minHits: 1,
-						maxMisses: 8,
-						matchDistance: Math.max(canvas.width, canvas.height) * 0.28,
-					});
-					barTracksRef.current = tracked.tracks;
-					setBarTracks(tracked.tracks);
-					if (tracked.events.length > 0) {
-						setBarEvents((current) =>
-							[...tracked.events, ...current].slice(0, 20),
-						);
-						for (const event of tracked.events) {
-							recordBarExit.mutate({
-								cameraId: selected.id,
-								trackId: event.trackId,
-								itemType: event.type,
-								confidenceAvg: event.confidence,
-								direction: event.direction,
-								zone: draft.location || "Barra",
-							});
-						}
-					}
-					drawDetections(canvas, [], tracked.tracks);
-					setDetection({
-						configured: true,
-						personCount: 0,
-						confidenceAvg: null,
-						message:
-							"Conteo de salida de barra activo: modelo local + tracking por movimiento.",
-					});
-					return;
-				}
 				const rawPeople = predictions.filter(
 					(prediction) => prediction.class === "person",
 				);
@@ -613,15 +650,11 @@ export default function CamerasPage() {
 		}
 	}, [
 		busy,
-		countingDirection,
-		countingLine,
 		drawDetections,
-		draft.location,
 		getObjectDetector,
 		draft.sourceType,
-		enabledBarItems,
 		mode,
-		recordBarExit,
+		processBarExitFrame,
 		recordObservation,
 		sampleFromCounts,
 		selected,
@@ -638,7 +671,7 @@ export default function CamerasPage() {
 			await detectOnce();
 			timeout = setTimeout(
 				loop,
-				mode === "bar_exit" ? 350 : selected.checkIntervalSeconds * 1000,
+				mode === "bar_exit" ? 180 : selected.checkIntervalSeconds * 1000,
 			);
 		};
 
