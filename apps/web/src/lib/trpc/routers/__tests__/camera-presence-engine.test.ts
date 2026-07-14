@@ -37,10 +37,10 @@ describe("camera presence engine", () => {
 		expect(current.status).toBe("present");
 	});
 
-	it("does not detect a person from isolated weak motion", () => {
+	it("does not detect a person from empty model samples", () => {
 		const result = evaluatePresenceWindow(
 			[
-				{ time: 0, personCount: 0, source: "motion", motionScore: 0.08 },
+				{ time: 0, personCount: 0, source: "none" },
 				{ time: 1000, personCount: 0, source: "none" },
 			],
 			{
@@ -59,9 +59,9 @@ describe("camera presence engine", () => {
 	it("preserves multiple people when repeated samples see two people", () => {
 		const result = evaluatePresenceWindow(
 			[
-				{ time: 0, personCount: 2, confidence: 0.82, source: "foreground" },
-				{ time: 1000, personCount: 1, confidence: 0.8, source: "face" },
-				{ time: 2000, personCount: 2, confidence: 0.86, source: "foreground" },
+				{ time: 0, personCount: 2, confidence: 0.82, source: "model" },
+				{ time: 1000, personCount: 1, confidence: 0.8, source: "model" },
+				{ time: 2000, personCount: 2, confidence: 0.86, source: "model" },
 			],
 			{
 				now: 2000,

@@ -2,8 +2,7 @@ export type PresenceSample = {
 	time: number;
 	personCount: number;
 	confidence?: number | null;
-	motionScore?: number;
-	source: "face" | "model" | "foreground" | "motion" | "none";
+	source: "model" | "none";
 };
 
 export type PresenceState = {
@@ -90,9 +89,6 @@ export function evaluatePresenceWindow(
 function positiveWeight(sample: PresenceSample) {
 	if (sample.personCount > 0) {
 		return Math.max(0.75, sample.confidence ?? 0.8);
-	}
-	if (sample.source === "motion" && (sample.motionScore ?? 0) >= 0.18) {
-		return 0.72;
 	}
 	return 0;
 }

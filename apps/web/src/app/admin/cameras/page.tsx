@@ -62,19 +62,6 @@ type DetectionResult = {
 	}>;
 };
 
-type BrowserFaceDetector = new (options?: {
-	fastMode?: boolean;
-	maxDetectedFaces?: number;
-}) => {
-	detect: (image: CanvasImageSource) => Promise<Array<unknown>>;
-};
-
-declare global {
-	interface Window {
-		FaceDetector?: BrowserFaceDetector;
-	}
-}
-
 export default function CamerasPage() {
 	const trpc = useTRPC();
 	const queryClient = useQueryClient();
@@ -83,14 +70,11 @@ export default function CamerasPage() {
 	const canvasRef = useRef<HTMLCanvasElement | null>(null);
 	const overlayCanvasRef = useRef<HTMLCanvasElement | null>(null);
 	const streamRef = useRef<MediaStream | null>(null);
-	const previousFrameRef = useRef<Uint8ClampedArray | null>(null);
-	const baselineFrameRef = useRef<Uint8ClampedArray | null>(null);
 	const [selectedId, setSelectedId] = useState<number | null>(null);
 	const [running, setRunning] = useState(false);
 	const [cameraError, setCameraError] = useState<string | null>(null);
-	const [calibrated, setCalibrated] = useState(false);
-	const [occupancyScore, setOccupancyScore] = useState(0);
-	const [foregroundPersonCount, setForegroundPersonCount] = useState(0);
+	const [rawDetectionCount, setRawDetectionCount] = useState(0);
+	const [acceptedDetectionCount, setAcceptedDetectionCount] = useState(0);
 	const objectDetectorRef = useRef<ObjectDetection | null>(null);
 	const objectDetectorPromiseRef = useRef<Promise<ObjectDetection> | null>(
 		null,
@@ -267,239 +251,30 @@ export default function CamerasPage() {
 		return next;
 	}, []);
 
-	const measureMotionScore = useCallback((canvas: HTMLCanvasElement) => {
-		const sampleCanvas = document.createElement("canvas");
-		sampleCanvas.width = 64;
-		sampleCanvas.height = 36;
-		const sampleContext = sampleCanvas.getContext("2d", {
-			willReadFrequently: true,
-		});
-		if (!sampleContext) return 0;
-		sampleContext.drawImage(
-			canvas,
-			0,
-			0,
-			sampleCanvas.width,
-			sampleCanvas.height,
-		);
-		const data = sampleContext.getImageData(
-			0,
-			0,
-			sampleCanvas.width,
-			sampleCanvas.height,
-		).data;
-		const previous = previousFrameRef.current;
-		previousFrameRef.current = new Uint8ClampedArray(data);
-		if (!previous || previous.length !== data.length) return 0;
-
-		let changed = 0;
-		const total = data.length / 4;
-		for (let index = 0; index < data.length; index += 4) {
-			const currentLum =
-				(data[index] ?? 0) * 0.299 +
-				(data[index + 1] ?? 0) * 0.587 +
-				(data[index + 2] ?? 0) * 0.114;
-			const previousLum =
-				(previous[index] ?? 0) * 0.299 +
-				(previous[index + 1] ?? 0) * 0.587 +
-				(previous[index + 2] ?? 0) * 0.114;
-			if (Math.abs(currentLum - previousLum) > 28) changed += 1;
-		}
-		return Math.round((changed / total) * 100) / 100;
-	}, []);
-
-	const captureReducedFrame = useCallback((canvas: HTMLCanvasElement) => {
-		const sampleCanvas = document.createElement("canvas");
-		sampleCanvas.width = 96;
-		sampleCanvas.height = 54;
-		const sampleContext = sampleCanvas.getContext("2d", {
-			willReadFrequently: true,
-		});
-		if (!sampleContext) return null;
-		sampleContext.drawImage(
-			canvas,
-			0,
-			0,
-			sampleCanvas.width,
-			sampleCanvas.height,
-		);
-		return new Uint8ClampedArray(
-			sampleContext.getImageData(0, 0, sampleCanvas.width, sampleCanvas.height)
-				.data,
-		);
-	}, []);
-
-	const measureOccupancyAgainstBaseline = useCallback(
-		(canvas: HTMLCanvasElement) => {
-			const current = captureReducedFrame(canvas);
-			const baseline = baselineFrameRef.current;
-			if (!current || !baseline || current.length !== baseline.length) {
-				return { score: 0, personCount: 0 };
-			}
-
-			let changed = 0;
-			const frameTotal = current.length / 4;
-			const width = 96;
-			const height = 54;
-			const roi = {
-				left: 8,
-				right: 88,
-				top: 6,
-				bottom: 52,
-			};
-			const roiTotal = (roi.right - roi.left) * (roi.bottom - roi.top);
-			const foreground = new Uint8Array(frameTotal);
-			for (let index = 0; index < current.length; index += 4) {
-				const pixel = index / 4;
-				const x = pixel % width;
-				const y = Math.floor(pixel / width);
-				if (x < roi.left || x >= roi.right || y < roi.top || y >= roi.bottom) {
-					continue;
-				}
-				const currentLum =
-					(current[index] ?? 0) * 0.299 +
-					(current[index + 1] ?? 0) * 0.587 +
-					(current[index + 2] ?? 0) * 0.114;
-				const baselineLum =
-					(baseline[index] ?? 0) * 0.299 +
-					(baseline[index + 1] ?? 0) * 0.587 +
-					(baseline[index + 2] ?? 0) * 0.114;
-				const redDiff = Math.abs(
-					(current[index] ?? 0) - (baseline[index] ?? 0),
-				);
-				const greenDiff = Math.abs(
-					(current[index + 1] ?? 0) - (baseline[index + 1] ?? 0),
-				);
-				const blueDiff = Math.abs(
-					(current[index + 2] ?? 0) - (baseline[index + 2] ?? 0),
-				);
-				const colorDiff = Math.max(redDiff, greenDiff, blueDiff);
-				if (Math.abs(currentLum - baselineLum) > 34 || colorDiff > 48) {
-					changed += 1;
-					foreground[pixel] = 1;
-				}
-			}
-			const score = Math.round((changed / roiTotal) * 100) / 100;
-			if (score < 0.12 || score > 0.58) return { score, personCount: 0 };
-
-			const visited = new Uint8Array(frameTotal);
-			const componentAreas: number[] = [];
-			for (let pixel = 0; pixel < frameTotal; pixel += 1) {
-				if (!foreground[pixel] || visited[pixel]) continue;
-				const stack = [pixel];
-				visited[pixel] = 1;
-				let area = 0;
-				let minX = width;
-				let maxX = 0;
-				let minY = height;
-				let maxY = 0;
-
-				while (stack.length > 0) {
-					const currentPixel = stack.pop() ?? 0;
-					area += 1;
-					const x = currentPixel % width;
-					const y = Math.floor(currentPixel / width);
-					minX = Math.min(minX, x);
-					maxX = Math.max(maxX, x);
-					minY = Math.min(minY, y);
-					maxY = Math.max(maxY, y);
-
-					const neighbors = [
-						currentPixel - 1,
-						currentPixel + 1,
-						currentPixel - width,
-						currentPixel + width,
-					];
-					for (const neighbor of neighbors) {
-						if (
-							neighbor < 0 ||
-							neighbor >= frameTotal ||
-							visited[neighbor] ||
-							!foreground[neighbor]
-						) {
-							continue;
-						}
-						const neighborX = neighbor % width;
-						if (Math.abs(neighborX - x) > 1) continue;
-						visited[neighbor] = 1;
-						stack.push(neighbor);
-					}
-				}
-
-				const componentWidth = maxX - minX + 1;
-				const componentHeight = maxY - minY + 1;
-				const aspect = componentHeight / Math.max(1, componentWidth);
-				if (
-					area >= 95 &&
-					componentHeight >= 16 &&
-					componentWidth >= 6 &&
-					aspect >= 0.65
-				) {
-					componentAreas.push(area);
-				}
-			}
-
-			const personCount =
-				componentAreas.length > 0 ? Math.min(9, componentAreas.length) : 1;
-			return { score, personCount };
-		},
-		[captureReducedFrame],
-	);
-
-	const calibrateEmptyStation = useCallback(() => {
-		if (!canvasRef.current) {
-			setCameraError("Primero enciende la cámara y espera a que haya imagen.");
-			return;
-		}
-		const frame = captureReducedFrame(canvasRef.current);
-		if (!frame) {
-			setCameraError("No se pudo capturar referencia del puesto.");
-			return;
-		}
-		baselineFrameRef.current = frame;
-		setCalibrated(true);
-		setCameraError(null);
-		toast.success("Puesto vacío calibrado.");
-	}, [captureReducedFrame]);
-
 	const sampleFromCounts = useCallback(
 		({
 			personCount,
 			confidence,
 			source,
-			motionScore,
 		}: {
 			personCount: number;
 			confidence?: number | null;
 			source: PresenceSample["source"];
-			motionScore: number;
-		}): PresenceSample => {
-			if (personCount > 0) {
-				return {
-					time: Date.now(),
-					personCount,
-					confidence,
-					source,
-					motionScore,
-				};
-			}
-			return {
-				time: Date.now(),
-				personCount: 0,
-				confidence: null,
-				source: "none",
-				motionScore,
-			};
-		},
+		}): PresenceSample => ({
+			time: Date.now(),
+			personCount,
+			confidence: personCount > 0 ? (confidence ?? 0.8) : null,
+			source: personCount > 0 ? source : "none",
+		}),
 		[],
 	);
-
 	const drawDetections = useCallback(
 		(canvas: HTMLCanvasElement, people: DetectedObject[]) => {
 			const overlay = overlayCanvasRef.current;
 			if (!overlay) return;
 			overlay.width = canvas.width;
 			overlay.height = canvas.height;
+			overlay.style.aspectRatio = `${canvas.width} / ${canvas.height}`;
 			const context = overlay.getContext("2d");
 			if (!context) return;
 			context.clearRect(0, 0, overlay.width, overlay.height);
@@ -559,17 +334,17 @@ export default function CamerasPage() {
 				canvas.width,
 				canvas.height,
 			);
-			const motionScore = measureMotionScore(canvas);
-			const foreground = measureOccupancyAgainstBaseline(canvas);
-			setOccupancyScore(foreground.score);
-			setForegroundPersonCount(foreground.personCount);
-
 			try {
 				const detector = await getObjectDetector();
-				const predictions = await detector.detect(canvas, 20, 0.5);
+				const predictions = await detector.detect(canvas, 20, 0.35);
+				const rawPeople = predictions.filter(
+					(prediction) => prediction.class === "person",
+				);
 				const people = predictions.filter((prediction) =>
 					isReliablePersonPrediction(prediction, canvas),
 				);
+				setRawDetectionCount(rawPeople.length);
+				setAcceptedDetectionCount(people.length);
 				drawDetections(canvas, people);
 				const sample = sampleFromCounts({
 					personCount: people.length,
@@ -579,7 +354,6 @@ export default function CamerasPage() {
 								people.length
 							: null,
 					source: people.length > 0 ? "model" : "none",
-					motionScore,
 				});
 				const stable = stabilizePresence(sample);
 				const result: DetectionResult = {
@@ -620,45 +394,6 @@ export default function CamerasPage() {
 				);
 			}
 
-			if (window.FaceDetector) {
-				drawDetections(canvas, []);
-				const detector = new window.FaceDetector({
-					fastMode: true,
-					maxDetectedFaces: 20,
-				});
-				const faces = await detector.detect(canvas);
-				const sample = sampleFromCounts({
-					personCount: faces.length,
-					confidence: faces.length > 0 ? 0.85 : null,
-					source: faces.length > 0 ? "face" : "none",
-					motionScore,
-				});
-				const stable = stabilizePresence(sample);
-				const result: DetectionResult = {
-					configured: true,
-					personCount: stable.personCount,
-					confidenceAvg: stable.personCount > 0 ? stable.score : null,
-					message:
-						sample.source === "motion"
-							? "Presencia probable por movimiento local dentro de ventana estable."
-							: "Deteccion local por rostro con ventana estable de 15 segundos.",
-					predictions: [],
-				};
-				setDetection(result);
-				recordObservation.mutate({
-					cameraId: selected.id,
-					personCount: stable.personCount,
-					confidenceAvg: result.confidenceAvg,
-					status:
-						stable.personCount > 1
-							? "multiple_people"
-							: stable.personCount > 0
-								? "person_detected"
-								: "empty",
-				});
-				return;
-			}
-
 			const imageDataUrl = canvas.toDataURL("image/jpeg", 0.9);
 			const response = await fetch("/api/cameras/detect", {
 				method: "POST",
@@ -675,7 +410,6 @@ export default function CamerasPage() {
 				personCount: rawPersonCount,
 				confidence: result.confidenceAvg,
 				source: rawPersonCount > 0 ? "model" : "none",
-				motionScore,
 			});
 			const stable = stabilizePresence(sample);
 			const stabilizedResult = {
@@ -685,9 +419,7 @@ export default function CamerasPage() {
 				message:
 					stable.status === "probably_present"
 						? "Presencia mantenida por lectura reciente durante maximo 5 segundos."
-						: sample.source === "motion"
-							? "Presencia probable por movimiento local; se confirma por ventana temporal."
-							: result.message,
+						: result.message,
 			};
 			setDetection(stabilizedResult);
 
@@ -730,9 +462,7 @@ export default function CamerasPage() {
 		busy,
 		drawDetections,
 		getObjectDetector,
-		measureOccupancyAgainstBaseline,
 		draft.sourceType,
-		measureMotionScore,
 		recordObservation,
 		sampleFromCounts,
 		selected,
@@ -884,43 +614,37 @@ export default function CamerasPage() {
 								<RefreshCwIcon className="mr-2 h-4 w-4" />
 								Analizar ahora
 							</Button>
-							<Button
-								variant="secondary"
-								onClick={calibrateEmptyStation}
-								disabled={!running}
-							>
-								Calibrar fondo vacio
-							</Button>
 						</div>
-						<div className="grid gap-2 rounded-xl border bg-muted/40 p-3 text-sm sm:grid-cols-3">
-							<div>
-								<div className="text-muted-foreground">Detector</div>
-								<div className="font-medium">
-									{detectorStatus === "ready"
-										? "Modelo local listo"
-										: detectorStatus === "loading"
-											? "Cargando modelo"
-											: detectorStatus === "error"
-												? "Error de modelo"
-												: "Pendiente"}
+						<div className="rounded-2xl border border-primary/20 bg-primary/5 p-4 text-sm">
+							<div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+								<div>
+									<div className="font-semibold text-base">
+										Detector de personas
+									</div>
+									<div className="mt-1 text-muted-foreground text-xs">
+										Modelo local COCO-SSD. Solo cuenta detecciones de clase
+										persona; los recuadros se dibujan encima del video.
+									</div>
 								</div>
-							</div>
-							<div>
-								<div className="text-muted-foreground">Cambio visual</div>
-								<div className="font-medium">
-									{Math.round(occupancyScore * 100)}%
-								</div>
-							</div>
-							<div>
-								<div className="text-muted-foreground">Fondo calibrado</div>
-								<div className="font-medium">
-									{calibrated
-										? foregroundPersonCount > 1
-											? `${foregroundPersonCount} cambios`
-											: foregroundPersonCount === 1
-												? "1 cambio"
-												: "Sin cambios"
-										: "Sin calibrar"}
+								<div className="grid grid-cols-3 gap-2 text-center text-xs">
+									<div className="rounded-lg bg-background px-3 py-2">
+										<div className="font-bold text-base">
+											{rawDetectionCount}
+										</div>
+										<div className="text-muted-foreground">detectadas</div>
+									</div>
+									<div className="rounded-lg bg-background px-3 py-2">
+										<div className="font-bold text-base">
+											{acceptedDetectionCount}
+										</div>
+										<div className="text-muted-foreground">filtradas</div>
+									</div>
+									<div className="rounded-lg bg-background px-3 py-2">
+										<div className="font-bold text-base">
+											{stablePresence.personCount}
+										</div>
+										<div className="text-muted-foreground">estables</div>
+									</div>
 								</div>
 							</div>
 						</div>
@@ -1278,8 +1002,8 @@ function DetectionStatus({
 	if (!result) {
 		return (
 			<div className="rounded-xl border bg-muted p-3 text-muted-foreground text-sm">
-				Aun no hay lectura. Enciende la camara, calibra el puesto vacio y
-				analiza manualmente.
+				Aun no hay lectura. Enciende la camara y espera a que el detector local
+				termine de cargar.
 			</div>
 		);
 	}
@@ -1357,10 +1081,10 @@ function isReliablePersonPrediction(
 	canvas: HTMLCanvasElement,
 ) {
 	if (prediction.class !== "person") return false;
-	if (prediction.score < 0.5) return false;
+	if (prediction.score < 0.42) return false;
 	const [, , width, height] = prediction.bbox;
 	const areaRatio =
 		(width * height) / Math.max(1, canvas.width * canvas.height);
 	const heightRatio = height / Math.max(1, canvas.height);
-	return areaRatio >= 0.025 && heightRatio >= 0.18;
+	return areaRatio >= 0.015 && heightRatio >= 0.14;
 }

@@ -360,7 +360,7 @@ function alertMessage(type: string, cameraName: string, personCount = 0) {
 	if (type === "camera_error")
 		return `${cameraName}: no se pudo leer la camara.`;
 	if (type === "model_not_configured") {
-		return `${cameraName}: calibra el puesto vacio para activar deteccion local.`;
+		return `${cameraName}: el detector local no esta disponible.`;
 	}
 	if (type === "multiple_people") {
 		return `${cameraName}: se detectaron ${personCount} personas en el puesto.`;
