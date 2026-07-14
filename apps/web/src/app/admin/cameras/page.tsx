@@ -85,6 +85,8 @@ export default function CamerasPage() {
 	const ipImageRef = useRef<HTMLImageElement | null>(null);
 	const canvasRef = useRef<HTMLCanvasElement | null>(null);
 	const overlayCanvasRef = useRef<HTMLCanvasElement | null>(null);
+	const motionCanvasRef = useRef<HTMLCanvasElement | null>(null);
+	const previousBarFrameRef = useRef<ImageData | null>(null);
 	const streamRef = useRef<MediaStream | null>(null);
 	const [selectedId, setSelectedId] = useState<number | null>(null);
 	const [running, setRunning] = useState(false);
@@ -234,6 +236,7 @@ export default function CamerasPage() {
 		const overlay = overlayCanvasRef.current;
 		overlay?.getContext("2d")?.clearRect(0, 0, overlay.width, overlay.height);
 		streamRef.current = null;
+		previousBarFrameRef.current = null;
 		setRunning(false);
 	}, []);
 
@@ -429,7 +432,7 @@ export default function CamerasPage() {
 				const detector = await getObjectDetector();
 				const predictions = await detector.detect(canvas, 20, 0.35);
 				if (mode === "bar_exit") {
-					const candidates = predictions
+					const modelCandidates = predictions
 						.map((prediction) =>
 							classifyBarCandidate({
 								class: prediction.class,
@@ -440,14 +443,25 @@ export default function CamerasPage() {
 						.filter((candidate): candidate is NonNullable<typeof candidate> =>
 							Boolean(candidate && enabledBarItems[candidate.type]),
 						);
+					const motionCandidates = enabledBarItems.plate
+						? detectMovingServedObjects(
+								canvas,
+								motionCanvasRef,
+								previousBarFrameRef,
+							)
+						: [];
+					const candidates = mergeBarCandidates([
+						...modelCandidates,
+						...motionCandidates,
+					]);
 					setBarDetectionCount(candidates.length);
 					const tracked = updateObjectTracks(barTracksRef.current, candidates, {
 						now: Date.now(),
 						line: lineToCanvas(countingLine, canvas),
 						direction: countingDirection,
-						minHits: 2,
-						maxMisses: 3,
-						matchDistance: Math.max(canvas.width, canvas.height) * 0.18,
+						minHits: 1,
+						maxMisses: 8,
+						matchDistance: Math.max(canvas.width, canvas.height) * 0.28,
 					});
 					barTracksRef.current = tracked.tracks;
 					setBarTracks(tracked.tracks);
@@ -471,7 +485,8 @@ export default function CamerasPage() {
 						configured: true,
 						personCount: 0,
 						confidenceAvg: null,
-						message: "Conteo de salida de barra activo.",
+						message:
+							"Conteo de salida de barra activo: modelo local + tracking por movimiento.",
 					});
 					return;
 				}
@@ -621,7 +636,10 @@ export default function CamerasPage() {
 		const loop = async () => {
 			if (cancelled) return;
 			await detectOnce();
-			timeout = setTimeout(loop, selected.checkIntervalSeconds * 1000);
+			timeout = setTimeout(
+				loop,
+				mode === "bar_exit" ? 350 : selected.checkIntervalSeconds * 1000,
+			);
 		};
 
 		timeout = setTimeout(loop, 700);
@@ -629,7 +647,7 @@ export default function CamerasPage() {
 			cancelled = true;
 			clearTimeout(timeout);
 		};
-	}, [detectOnce, running, selected]);
+	}, [detectOnce, mode, running, selected]);
 
 	useEffect(() => () => stopCamera(), [stopCamera]);
 
@@ -643,6 +661,7 @@ export default function CamerasPage() {
 		const resetKey = `${mode}:${countingDirection}:${countingLine.start.x}:${countingLine.start.y}:${countingLine.end.x}:${countingLine.end.y}`;
 		if (!resetKey) return;
 		barTracksRef.current = [];
+		previousBarFrameRef.current = null;
 		setBarTracks([]);
 	}, [mode, countingLine, countingDirection]);
 
@@ -856,6 +875,7 @@ export default function CamerasPage() {
 								exitSummary={exitSummary}
 								onReset={() => {
 									barTracksRef.current = [];
+									previousBarFrameRef.current = null;
 									setBarTracks([]);
 									setBarEvents([]);
 									setBarDetectionCount(0);
@@ -1575,6 +1595,162 @@ function lineToCanvas(
 			y: normalized.end.y * canvas.height,
 		},
 	};
+}
+
+function detectMovingServedObjects(
+	source: HTMLCanvasElement,
+	motionCanvasRef: React.MutableRefObject<HTMLCanvasElement | null>,
+	previousFrameRef: React.MutableRefObject<ImageData | null>,
+) {
+	if (!motionCanvasRef.current) {
+		motionCanvasRef.current = document.createElement("canvas");
+	}
+	const motionCanvas = motionCanvasRef.current;
+	const width = 240;
+	const height = Math.max(
+		120,
+		Math.round((source.height / source.width) * width),
+	);
+	motionCanvas.width = width;
+	motionCanvas.height = height;
+	const context = motionCanvas.getContext("2d", { willReadFrequently: true });
+	if (!context) return [];
+	context.drawImage(source, 0, 0, width, height);
+	const frame = context.getImageData(0, 0, width, height);
+	const previous = previousFrameRef.current;
+	previousFrameRef.current = frame;
+	if (!previous || previous.width !== width || previous.height !== height) {
+		return [];
+	}
+
+	const mask = new Uint8Array(width * height);
+	const data = frame.data;
+	const previousData = previous.data;
+	for (let index = 0; index < data.length; index += 4) {
+		const pixel = index / 4;
+		const gray =
+			data[index] * 0.299 + data[index + 1] * 0.587 + data[index + 2] * 0.114;
+		const previousGray =
+			previousData[index] * 0.299 +
+			previousData[index + 1] * 0.587 +
+			previousData[index + 2] * 0.114;
+		if (Math.abs(gray - previousGray) > 26) {
+			mask[pixel] = 1;
+		}
+	}
+
+	const components = connectedMotionComponents(mask, width, height)
+		.filter((component) => {
+			const areaRatio = component.area / (width * height);
+			const boxWidth = component.maxX - component.minX + 1;
+			const boxHeight = component.maxY - component.minY + 1;
+			const boxAreaRatio = (boxWidth * boxHeight) / (width * height);
+			return (
+				areaRatio >= 0.004 &&
+				boxAreaRatio >= 0.012 &&
+				boxAreaRatio <= 0.45 &&
+				boxWidth >= 18 &&
+				boxHeight >= 14
+			);
+		})
+		.sort((a, b) => b.area - a.area)
+		.slice(0, 5);
+
+	return components.map((component) => {
+		const scaleX = source.width / width;
+		const scaleY = source.height / height;
+		return {
+			type: "plate" as const,
+			confidence: Math.min(0.9, 0.55 + component.area / 2500),
+			label: "motion-served-object",
+			bbox: [
+				component.minX * scaleX,
+				component.minY * scaleY,
+				(component.maxX - component.minX + 1) * scaleX,
+				(component.maxY - component.minY + 1) * scaleY,
+			] as [number, number, number, number],
+		};
+	});
+}
+
+function connectedMotionComponents(
+	mask: Uint8Array,
+	width: number,
+	height: number,
+) {
+	const visited = new Uint8Array(mask.length);
+	const components: Array<{
+		minX: number;
+		minY: number;
+		maxX: number;
+		maxY: number;
+		area: number;
+	}> = [];
+
+	for (let start = 0; start < mask.length; start++) {
+		if (!mask[start] || visited[start]) continue;
+		const queue = [start];
+		visited[start] = 1;
+		let area = 0;
+		let minX = width;
+		let minY = height;
+		let maxX = 0;
+		let maxY = 0;
+
+		for (let cursor = 0; cursor < queue.length; cursor++) {
+			const pixel = queue[cursor];
+			const x = pixel % width;
+			const y = Math.floor(pixel / width);
+			area += 1;
+			minX = Math.min(minX, x);
+			minY = Math.min(minY, y);
+			maxX = Math.max(maxX, x);
+			maxY = Math.max(maxY, y);
+
+			for (const next of [pixel - 1, pixel + 1, pixel - width, pixel + width]) {
+				if (next < 0 || next >= mask.length) continue;
+				const nextX = next % width;
+				if (Math.abs(nextX - x) > 1) continue;
+				if (!mask[next] || visited[next]) continue;
+				visited[next] = 1;
+				queue.push(next);
+			}
+		}
+
+		components.push({ minX, minY, maxX, maxY, area });
+	}
+
+	return components;
+}
+
+function mergeBarCandidates(
+	candidates: Array<NonNullable<ReturnType<typeof classifyBarCandidate>>>,
+) {
+	const sorted = [...candidates].sort((a, b) => b.confidence - a.confidence);
+	const merged: typeof sorted = [];
+	for (const candidate of sorted) {
+		const overlapsExisting = merged.some(
+			(existing) =>
+				existing.type === candidate.type &&
+				intersectionOverUnion(existing.bbox, candidate.bbox) > 0.35,
+		);
+		if (!overlapsExisting) merged.push(candidate);
+	}
+	return merged.slice(0, 12);
+}
+
+function intersectionOverUnion(
+	a: [number, number, number, number],
+	b: [number, number, number, number],
+) {
+	const left = Math.max(a[0], b[0]);
+	const top = Math.max(a[1], b[1]);
+	const right = Math.min(a[0] + a[2], b[0] + b[2]);
+	const bottom = Math.min(a[1] + a[3], b[1] + b[3]);
+	const intersection = Math.max(0, right - left) * Math.max(0, bottom - top);
+	const areaA = a[2] * a[3];
+	const areaB = b[2] * b[3];
+	return intersection / Math.max(1, areaA + areaB - intersection);
 }
 
 function directionLabel(direction: CountingDirection | string) {
