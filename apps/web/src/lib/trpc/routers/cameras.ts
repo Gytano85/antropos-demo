@@ -4,6 +4,7 @@ import { z } from "zod/v4";
 import { db } from "@/lib/db";
 import {
 	cameraAlerts,
+	cameraBarExitEvents,
 	cameraDevices,
 	cameraPresenceEvents,
 } from "@/lib/db/schema";
@@ -36,6 +37,20 @@ const observationInput = z.object({
 	]),
 });
 
+const barExitInput = z.object({
+	cameraId: z.number(),
+	trackId: z.string().min(1).max(80),
+	itemType: z.enum(["plate", "glass", "bottle", "can"]),
+	confidenceAvg: z.number().min(0).max(1).nullable(),
+	direction: z.enum([
+		"left_to_right",
+		"right_to_left",
+		"top_to_bottom",
+		"bottom_to_top",
+	]),
+	zone: z.string().min(1).max(120).default("Barra"),
+});
+
 export async function ensureCameraTables() {
 	const statements = [
 		`CREATE TABLE IF NOT EXISTS camera_devices (
@@ -64,6 +79,18 @@ export async function ensureCameraTables() {
 			confidence_avg real,
 			status varchar(40) NOT NULL,
 			source varchar(40) NOT NULL DEFAULT 'webcam',
+			created_at timestamp DEFAULT now()
+		)`,
+		`CREATE TABLE IF NOT EXISTS camera_bar_exit_events (
+			id serial PRIMARY KEY,
+			user_uid varchar(255) NOT NULL,
+			camera_id integer NOT NULL,
+			track_id varchar(80) NOT NULL,
+			item_type varchar(40) NOT NULL,
+			confidence_avg real,
+			direction varchar(30) NOT NULL,
+			zone varchar(120) NOT NULL DEFAULT 'Barra',
+			status varchar(30) NOT NULL DEFAULT 'counted',
 			created_at timestamp DEFAULT now()
 		)`,
 		`CREATE TABLE IF NOT EXISTS camera_alerts (
@@ -151,6 +178,13 @@ export const camerasRouter = router({
 			.orderBy(desc(cameraAlerts.created_at))
 			.limit(30);
 
+		const exitEvents = await db
+			.select()
+			.from(cameraBarExitEvents)
+			.where(eq(cameraBarExitEvents.user_uid, ctx.user.id))
+			.orderBy(desc(cameraBarExitEvents.created_at))
+			.limit(60);
+
 		return {
 			devices: devices.map(mapDevice),
 			events: events.map((event) => ({
@@ -170,6 +204,17 @@ export const camerasRouter = router({
 				status: alert.status,
 				startedAt: alert.started_at?.toISOString() ?? null,
 				resolvedAt: alert.resolved_at?.toISOString() ?? null,
+			})),
+			exitEvents: exitEvents.map((event) => ({
+				id: event.id,
+				cameraId: event.camera_id,
+				trackId: event.track_id,
+				itemType: event.item_type,
+				confidenceAvg: event.confidence_avg,
+				direction: event.direction,
+				zone: event.zone,
+				status: event.status,
+				createdAt: event.created_at?.toISOString() ?? null,
 			})),
 			inferenceConfigured: Boolean(process.env.ROBOFLOW_API_KEY),
 		};
@@ -297,6 +342,49 @@ export const camerasRouter = router({
 					: null,
 				shouldAlert,
 			};
+		}),
+
+	recordBarExit: protectedProcedure
+		.input(barExitInput)
+		.mutation(async ({ ctx, input }) => {
+			if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
+			await ensureCameraTables();
+
+			const [camera] = await db
+				.select()
+				.from(cameraDevices)
+				.where(eq(cameraDevices.id, input.cameraId))
+				.limit(1);
+
+			if (!camera || camera.user_uid !== ctx.user.id) {
+				throw new TRPCError({
+					code: "NOT_FOUND",
+					message: "Camara no encontrada",
+				});
+			}
+
+			const existing = await db
+				.select({ id: cameraBarExitEvents.id })
+				.from(cameraBarExitEvents)
+				.where(
+					sql`${cameraBarExitEvents.user_uid} = ${ctx.user.id} AND ${cameraBarExitEvents.camera_id} = ${input.cameraId} AND ${cameraBarExitEvents.track_id} = ${input.trackId}`,
+				)
+				.limit(1);
+
+			if (existing.length > 0) return { ok: true, duplicated: true };
+
+			await db.insert(cameraBarExitEvents).values({
+				user_uid: ctx.user.id,
+				camera_id: input.cameraId,
+				track_id: input.trackId,
+				item_type: input.itemType,
+				confidence_avg: input.confidenceAvg,
+				direction: input.direction,
+				zone: input.zone,
+				status: "counted",
+			});
+
+			return { ok: true, duplicated: false };
 		}),
 });
 

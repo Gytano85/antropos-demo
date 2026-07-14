@@ -28,8 +28,10 @@ import {
 	AlertTriangleIcon,
 	CameraIcon,
 	CheckCircle2Icon,
+	ChevronRightIcon,
 	EyeIcon,
 	NetworkIcon,
+	PackageIcon,
 	RefreshCwIcon,
 	SaveIcon,
 	ShieldAlertIcon,
@@ -39,6 +41,18 @@ import {
 import type React from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
+import {
+	type BarExitEvent,
+	type BarItemType,
+	type CountingDirection,
+	type CountingLine,
+	classifyBarCandidate,
+	defaultCountingLine,
+	itemLabel,
+	normalizeLine,
+	type ObjectTrack,
+	updateObjectTracks,
+} from "@/lib/cameras/bar-exit-engine";
 import {
 	evaluatePresenceWindow,
 	type PresenceSample,
@@ -61,6 +75,8 @@ type DetectionResult = {
 		height?: number;
 	}>;
 };
+
+type CameraMode = "presence" | "bar_exit";
 
 export default function CamerasPage() {
 	const trpc = useTRPC();
@@ -92,6 +108,27 @@ export default function CamerasPage() {
 		totalSamples: 0,
 		lastPositiveAt: null as number | null,
 		updatedAt: 0,
+	});
+	const [mode, setMode] = useState<CameraMode>("presence");
+	const [countingLine, setCountingLine] = useState<CountingLine>(
+		defaultCountingLine(),
+	);
+	const [countingDirection, setCountingDirection] =
+		useState<CountingDirection>("left_to_right");
+	const [drawingPoint, setDrawingPoint] = useState<"start" | "end" | null>(
+		null,
+	);
+	const [barTracks, setBarTracks] = useState<ObjectTrack[]>([]);
+	const barTracksRef = useRef<ObjectTrack[]>([]);
+	const [barEvents, setBarEvents] = useState<BarExitEvent[]>([]);
+	const [barDetectionCount, setBarDetectionCount] = useState(0);
+	const [enabledBarItems, setEnabledBarItems] = useState<
+		Record<BarItemType, boolean>
+	>({
+		plate: true,
+		glass: true,
+		bottle: true,
+		can: true,
 	});
 	const stablePresenceRef = useRef(stablePresence);
 	const presenceSamplesRef = useRef<PresenceSample[]>([]);
@@ -150,6 +187,17 @@ export default function CamerasPage() {
 
 	const recordObservation = useMutation(
 		trpc.cameras.recordObservation.mutationOptions({
+			onSuccess: async () => {
+				await queryClient.invalidateQueries(
+					trpc.cameras.overview.queryOptions(),
+				);
+			},
+			onError: (error) => toast.error(error.message),
+		}),
+	);
+
+	const recordBarExit = useMutation(
+		trpc.cameras.recordBarExit.mutationOptions({
 			onSuccess: async () => {
 				await queryClient.invalidateQueries(
 					trpc.cameras.overview.queryOptions(),
@@ -269,7 +317,11 @@ export default function CamerasPage() {
 		[],
 	);
 	const drawDetections = useCallback(
-		(canvas: HTMLCanvasElement, people: DetectedObject[]) => {
+		(
+			canvas: HTMLCanvasElement,
+			people: DetectedObject[],
+			tracks: ObjectTrack[] = [],
+		) => {
 			const overlay = overlayCanvasRef.current;
 			if (!overlay) return;
 			overlay.width = canvas.width;
@@ -280,6 +332,45 @@ export default function CamerasPage() {
 			context.clearRect(0, 0, overlay.width, overlay.height);
 			context.lineWidth = Math.max(3, Math.round(canvas.width / 320));
 			context.font = `${Math.max(16, Math.round(canvas.width / 55))}px sans-serif`;
+			if (mode === "bar_exit") {
+				const line = lineToCanvas(countingLine, canvas);
+				context.strokeStyle = "#f59e0b";
+				context.fillStyle = "#f59e0b";
+				context.setLineDash([14, 10]);
+				context.beginPath();
+				context.moveTo(line.start.x, line.start.y);
+				context.lineTo(line.end.x, line.end.y);
+				context.stroke();
+				context.setLineDash([]);
+				context.beginPath();
+				context.arc(line.start.x, line.start.y, 8, 0, Math.PI * 2);
+				context.arc(line.end.x, line.end.y, 8, 0, Math.PI * 2);
+				context.fill();
+				context.fillStyle = "rgba(0,0,0,0.75)";
+				context.fillRect(12, 12, 280, 30);
+				context.fillStyle = "#fff";
+				context.fillText(
+					`Linea de salida: ${directionLabel(countingDirection)}`,
+					22,
+					34,
+				);
+
+				for (const track of tracks) {
+					const [x, y, width, height] = track.bbox;
+					context.strokeStyle = track.counted ? "#22c55e" : "#38bdf8";
+					context.fillStyle = "rgba(0,0,0,0.72)";
+					context.strokeRect(x, y, width, height);
+					const label = `${itemLabel(track.type)} ${track.id.replace("_", " #")} ${
+						track.counted ? "contado" : ""
+					}`;
+					const labelWidth = context.measureText(label).width + 12;
+					const labelY = Math.max(0, y - 26);
+					context.fillRect(x, labelY, labelWidth, 24);
+					context.fillStyle = "#fff";
+					context.fillText(label, x + 6, labelY + 17);
+				}
+				return;
+			}
 			for (const person of people) {
 				const [x, y, width, height] = person.bbox;
 				context.strokeStyle = person.score >= 0.7 ? "#22c55e" : "#f59e0b";
@@ -293,7 +384,7 @@ export default function CamerasPage() {
 				context.fillText(label, x + 6, labelY + 17);
 			}
 		},
-		[],
+		[countingDirection, countingLine, mode],
 	);
 
 	const detectOnce = useCallback(async () => {
@@ -337,6 +428,53 @@ export default function CamerasPage() {
 			try {
 				const detector = await getObjectDetector();
 				const predictions = await detector.detect(canvas, 20, 0.35);
+				if (mode === "bar_exit") {
+					const candidates = predictions
+						.map((prediction) =>
+							classifyBarCandidate({
+								class: prediction.class,
+								score: prediction.score,
+								bbox: prediction.bbox,
+							}),
+						)
+						.filter((candidate): candidate is NonNullable<typeof candidate> =>
+							Boolean(candidate && enabledBarItems[candidate.type]),
+						);
+					setBarDetectionCount(candidates.length);
+					const tracked = updateObjectTracks(barTracksRef.current, candidates, {
+						now: Date.now(),
+						line: lineToCanvas(countingLine, canvas),
+						direction: countingDirection,
+						minHits: 2,
+						maxMisses: 3,
+						matchDistance: Math.max(canvas.width, canvas.height) * 0.18,
+					});
+					barTracksRef.current = tracked.tracks;
+					setBarTracks(tracked.tracks);
+					if (tracked.events.length > 0) {
+						setBarEvents((current) =>
+							[...tracked.events, ...current].slice(0, 20),
+						);
+						for (const event of tracked.events) {
+							recordBarExit.mutate({
+								cameraId: selected.id,
+								trackId: event.trackId,
+								itemType: event.type,
+								confidenceAvg: event.confidence,
+								direction: event.direction,
+								zone: draft.location || "Barra",
+							});
+						}
+					}
+					drawDetections(canvas, [], tracked.tracks);
+					setDetection({
+						configured: true,
+						personCount: 0,
+						confidenceAvg: null,
+						message: "Conteo de salida de barra activo.",
+					});
+					return;
+				}
 				const rawPeople = predictions.filter(
 					(prediction) => prediction.class === "person",
 				);
@@ -460,9 +598,15 @@ export default function CamerasPage() {
 		}
 	}, [
 		busy,
+		countingDirection,
+		countingLine,
 		drawDetections,
+		draft.location,
 		getObjectDetector,
 		draft.sourceType,
+		enabledBarItems,
+		mode,
+		recordBarExit,
 		recordObservation,
 		sampleFromCounts,
 		selected,
@@ -492,6 +636,63 @@ export default function CamerasPage() {
 	const openAlerts = (data?.alerts ?? []).filter(
 		(alert) => alert.status === "open",
 	);
+	const savedExitEvents = data?.exitEvents ?? [];
+	const exitSummary = summarizeExitEvents([...barEvents, ...savedExitEvents]);
+
+	useEffect(() => {
+		const resetKey = `${mode}:${countingDirection}:${countingLine.start.x}:${countingLine.start.y}:${countingLine.end.x}:${countingLine.end.y}`;
+		if (!resetKey) return;
+		barTracksRef.current = [];
+		setBarTracks([]);
+	}, [mode, countingLine, countingDirection]);
+
+	const updateLineFromPointer = useCallback(
+		(event: React.PointerEvent<HTMLCanvasElement>, point: "start" | "end") => {
+			const rect = event.currentTarget.getBoundingClientRect();
+			const nextPoint = {
+				x: (event.clientX - rect.left) / Math.max(1, rect.width),
+				y: (event.clientY - rect.top) / Math.max(1, rect.height),
+			};
+			setCountingLine((current) =>
+				normalizeLine({
+					...current,
+					[point]: nextPoint,
+				}),
+			);
+		},
+		[],
+	);
+
+	const handleOverlayPointerDown = useCallback(
+		(event: React.PointerEvent<HTMLCanvasElement>) => {
+			if (mode !== "bar_exit") return;
+			const rect = event.currentTarget.getBoundingClientRect();
+			const point = {
+				x: (event.clientX - rect.left) / Math.max(1, rect.width),
+				y: (event.clientY - rect.top) / Math.max(1, rect.height),
+			};
+			const startDistance = Math.hypot(
+				point.x - countingLine.start.x,
+				point.y - countingLine.start.y,
+			);
+			const endDistance = Math.hypot(
+				point.x - countingLine.end.x,
+				point.y - countingLine.end.y,
+			);
+			const selectedPoint = startDistance <= endDistance ? "start" : "end";
+			setDrawingPoint(selectedPoint);
+			updateLineFromPointer(event, selectedPoint);
+		},
+		[countingLine, mode, updateLineFromPointer],
+	);
+
+	const handleOverlayPointerMove = useCallback(
+		(event: React.PointerEvent<HTMLCanvasElement>) => {
+			if (mode !== "bar_exit" || !drawingPoint) return;
+			updateLineFromPointer(event, drawingPoint);
+		},
+		[drawingPoint, mode, updateLineFromPointer],
+	);
 
 	return (
 		<div className="space-y-6">
@@ -500,11 +701,11 @@ export default function CamerasPage() {
 					<div>
 						<div className="flex items-center gap-2">
 							<CameraIcon className="h-6 w-6 text-primary" />
-							<h1 className="font-bold text-2xl">Presencia en puesto</h1>
+							<h1 className="font-bold text-2xl">Cámaras operativas</h1>
 						</div>
 						<p className="mt-1 text-muted-foreground text-sm">
-							Modulo de camaras con deteccion local de personas. Cuenta 0, 1 o
-							2+ personas desde la webcam o una camara IP compatible.
+							Detección local para presencia y conteo de salida de barra con
+							línea configurable.
 						</p>
 					</div>
 					<Badge
@@ -519,18 +720,34 @@ export default function CamerasPage() {
 									: "Detector local"}
 					</Badge>
 				</div>
+				<div className="mt-4 grid gap-2 sm:grid-cols-2">
+					<ModeButton
+						active={mode === "presence"}
+						title="Presencia"
+						description="Cuenta personas en un puesto."
+						onClick={() => setMode("presence")}
+					/>
+					<ModeButton
+						active={mode === "bar_exit"}
+						title="Salida de barra"
+						description="Cuenta platos, vasos, botellas y latas por cruce."
+						onClick={() => setMode("bar_exit")}
+					/>
+				</div>
 			</div>
 
 			<div className="grid gap-4 md:grid-cols-4">
 				<Metric icon={CameraIcon} label="Camaras" value={devices.length} />
 				<Metric
-					icon={UsersIcon}
-					label="Personas ahora"
+					icon={mode === "bar_exit" ? PackageIcon : UsersIcon}
+					label={mode === "bar_exit" ? "Salidas hoy" : "Personas ahora"}
 					value={
-						stablePresence.personCount ||
-						selected?.lastPersonCount ||
-						detection?.personCount ||
-						0
+						mode === "bar_exit"
+							? savedExitEvents.length + barEvents.length
+							: stablePresence.personCount ||
+								selected?.lastPersonCount ||
+								detection?.personCount ||
+								0
 					}
 				/>
 				<Metric
@@ -540,11 +757,13 @@ export default function CamerasPage() {
 				/>
 				<Metric
 					icon={EyeIcon}
-					label="Ultima deteccion"
+					label={mode === "bar_exit" ? "Objetos visibles" : "Ultima deteccion"}
 					value={
-						selected?.lastSeenAt
-							? new Date(selected.lastSeenAt).toLocaleTimeString()
-							: "Sin datos"
+						mode === "bar_exit"
+							? barDetectionCount
+							: selected?.lastSeenAt
+								? new Date(selected.lastSeenAt).toLocaleTimeString()
+								: "Sin datos"
 					}
 				/>
 			</div>
@@ -554,13 +773,16 @@ export default function CamerasPage() {
 					<CardHeader>
 						<CardTitle className="flex items-center gap-2">
 							<CameraIcon className="h-5 w-5" />
-							{draft.sourceType === "ip_camera"
-								? "Camara IP / stream"
-								: "Webcam de prueba"}
+							{mode === "bar_exit"
+								? "Conteo por línea de salida"
+								: draft.sourceType === "ip_camera"
+									? "Camara IP / stream"
+									: "Webcam de prueba"}
 						</CardTitle>
 						<CardDescription>
-							La webcam sirve para demo. Para camara IP usa una URL HTTP/MJPEG o
-							snapshot accesible desde la misma red.
+							{mode === "bar_exit"
+								? "Arrastra los puntos naranjas para colocar la línea. Solo se cuenta cuando el objeto cruza en la dirección configurada."
+								: "La webcam sirve para demo. Para camara IP usa una URL HTTP/MJPEG o snapshot accesible desde la misma red."}
 						</CardDescription>
 					</CardHeader>
 					<CardContent className="space-y-4">
@@ -583,7 +805,15 @@ export default function CamerasPage() {
 							)}
 							<canvas
 								ref={overlayCanvasRef}
-								className="pointer-events-none absolute inset-0 h-full w-full"
+								onPointerDown={handleOverlayPointerDown}
+								onPointerMove={handleOverlayPointerMove}
+								onPointerUp={() => setDrawingPoint(null)}
+								onPointerLeave={() => setDrawingPoint(null)}
+								className={`absolute inset-0 h-full w-full ${
+									mode === "bar_exit"
+										? "cursor-crosshair touch-none"
+										: "pointer-events-none"
+								}`}
 							/>
 						</div>
 						<canvas ref={canvasRef} className="hidden" />
@@ -615,39 +845,57 @@ export default function CamerasPage() {
 								Analizar ahora
 							</Button>
 						</div>
-						<div className="rounded-2xl border border-primary/20 bg-primary/5 p-4 text-sm">
-							<div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-								<div>
-									<div className="font-semibold text-base">
-										Detector de personas
-									</div>
-									<div className="mt-1 text-muted-foreground text-xs">
-										Modelo local COCO-SSD. Solo cuenta detecciones de clase
-										persona; los recuadros se dibujan encima del video.
-									</div>
-								</div>
-								<div className="grid grid-cols-3 gap-2 text-center text-xs">
-									<div className="rounded-lg bg-background px-3 py-2">
-										<div className="font-bold text-base">
-											{rawDetectionCount}
+						{mode === "bar_exit" ? (
+							<BarExitPanel
+								countingDirection={countingDirection}
+								setCountingDirection={setCountingDirection}
+								enabledBarItems={enabledBarItems}
+								setEnabledBarItems={setEnabledBarItems}
+								barDetectionCount={barDetectionCount}
+								barTracks={barTracks}
+								exitSummary={exitSummary}
+								onReset={() => {
+									barTracksRef.current = [];
+									setBarTracks([]);
+									setBarEvents([]);
+									setBarDetectionCount(0);
+								}}
+							/>
+						) : (
+							<div className="rounded-2xl border border-primary/20 bg-primary/5 p-4 text-sm">
+								<div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+									<div>
+										<div className="font-semibold text-base">
+											Detector de personas
 										</div>
-										<div className="text-muted-foreground">detectadas</div>
-									</div>
-									<div className="rounded-lg bg-background px-3 py-2">
-										<div className="font-bold text-base">
-											{acceptedDetectionCount}
+										<div className="mt-1 text-muted-foreground text-xs">
+											Modelo local COCO-SSD. Solo cuenta detecciones de clase
+											persona; los recuadros se dibujan encima del video.
 										</div>
-										<div className="text-muted-foreground">filtradas</div>
 									</div>
-									<div className="rounded-lg bg-background px-3 py-2">
-										<div className="font-bold text-base">
-											{stablePresence.personCount}
+									<div className="grid grid-cols-3 gap-2 text-center text-xs">
+										<div className="rounded-lg bg-background px-3 py-2">
+											<div className="font-bold text-base">
+												{rawDetectionCount}
+											</div>
+											<div className="text-muted-foreground">detectadas</div>
 										</div>
-										<div className="text-muted-foreground">estables</div>
+										<div className="rounded-lg bg-background px-3 py-2">
+											<div className="font-bold text-base">
+												{acceptedDetectionCount}
+											</div>
+											<div className="text-muted-foreground">filtradas</div>
+										</div>
+										<div className="rounded-lg bg-background px-3 py-2">
+											<div className="font-bold text-base">
+												{stablePresence.personCount}
+											</div>
+											<div className="text-muted-foreground">estables</div>
+										</div>
 									</div>
 								</div>
 							</div>
-						</div>
+						)}
 						{cameraError && (
 							<div className="rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-destructive text-sm">
 								{cameraError}
@@ -863,54 +1111,277 @@ export default function CamerasPage() {
 
 				<Card>
 					<CardHeader>
-						<CardTitle>Lecturas recientes</CardTitle>
+						<CardTitle>
+							{mode === "bar_exit" ? "Salidas recientes" : "Lecturas recientes"}
+						</CardTitle>
 						<CardDescription>
-							Muestras guardadas para comprobar que el módulo está trabajando.
+							{mode === "bar_exit"
+								? "Objetos contados al cruzar la línea de salida."
+								: "Muestras guardadas para comprobar que el módulo está trabajando."}
 						</CardDescription>
 					</CardHeader>
 					<CardContent>
-						<Table>
-							<TableHeader>
-								<TableRow>
-									<TableHead>Hora</TableHead>
-									<TableHead>Personas</TableHead>
-									<TableHead>Confianza</TableHead>
-									<TableHead>Estado</TableHead>
-								</TableRow>
-							</TableHeader>
-							<TableBody>
-								{(data?.events ?? []).slice(0, 12).map((event) => (
-									<TableRow key={event.id}>
-										<TableCell>
-											{event.createdAt
-												? new Date(event.createdAt).toLocaleTimeString()
-												: "-"}
-										</TableCell>
-										<TableCell>{event.personCount}</TableCell>
-										<TableCell>
-											{event.confidenceAvg
-												? `${Math.round(event.confidenceAvg * 100)}%`
-												: "-"}
-										</TableCell>
-										<TableCell>{readableStatus(event.status)}</TableCell>
-									</TableRow>
-								))}
-								{!isLoading && (data?.events ?? []).length === 0 && (
+						{mode === "bar_exit" ? (
+							<ExitEventsTable
+								events={[...barEvents, ...savedExitEvents].slice(0, 14)}
+								isLoading={isLoading}
+							/>
+						) : (
+							<Table>
+								<TableHeader>
 									<TableRow>
-										<TableCell
-											colSpan={4}
-											className="text-center text-muted-foreground"
-										>
-											Enciende la cámara para empezar a registrar lecturas.
-										</TableCell>
+										<TableHead>Hora</TableHead>
+										<TableHead>Personas</TableHead>
+										<TableHead>Confianza</TableHead>
+										<TableHead>Estado</TableHead>
 									</TableRow>
-								)}
-							</TableBody>
-						</Table>
+								</TableHeader>
+								<TableBody>
+									{(data?.events ?? []).slice(0, 12).map((event) => (
+										<TableRow key={event.id}>
+											<TableCell>
+												{event.createdAt
+													? new Date(event.createdAt).toLocaleTimeString()
+													: "-"}
+											</TableCell>
+											<TableCell>{event.personCount}</TableCell>
+											<TableCell>
+												{event.confidenceAvg
+													? `${Math.round(event.confidenceAvg * 100)}%`
+													: "-"}
+											</TableCell>
+											<TableCell>{readableStatus(event.status)}</TableCell>
+										</TableRow>
+									))}
+									{!isLoading && (data?.events ?? []).length === 0 && (
+										<TableRow>
+											<TableCell
+												colSpan={4}
+												className="text-center text-muted-foreground"
+											>
+												Enciende la cámara para empezar a registrar lecturas.
+											</TableCell>
+										</TableRow>
+									)}
+								</TableBody>
+							</Table>
+						)}
 					</CardContent>
 				</Card>
 			</div>
 		</div>
+	);
+}
+
+function ModeButton({
+	active,
+	title,
+	description,
+	onClick,
+}: {
+	active: boolean;
+	title: string;
+	description: string;
+	onClick: () => void;
+}) {
+	return (
+		<button
+			type="button"
+			onClick={onClick}
+			className={`rounded-2xl border p-4 text-left transition ${
+				active ? "border-primary bg-primary/10" : "hover:bg-muted"
+			}`}
+		>
+			<div className="flex items-center justify-between gap-3">
+				<div>
+					<div className="font-semibold">{title}</div>
+					<div className="text-muted-foreground text-xs">{description}</div>
+				</div>
+				<ChevronRightIcon className="h-4 w-4 text-muted-foreground" />
+			</div>
+		</button>
+	);
+}
+
+function BarExitPanel({
+	countingDirection,
+	setCountingDirection,
+	enabledBarItems,
+	setEnabledBarItems,
+	barDetectionCount,
+	barTracks,
+	exitSummary,
+	onReset,
+}: {
+	countingDirection: CountingDirection;
+	setCountingDirection: (direction: CountingDirection) => void;
+	enabledBarItems: Record<BarItemType, boolean>;
+	setEnabledBarItems: React.Dispatch<
+		React.SetStateAction<Record<BarItemType, boolean>>
+	>;
+	barDetectionCount: number;
+	barTracks: ObjectTrack[];
+	exitSummary: Record<BarItemType, number>;
+	onReset: () => void;
+}) {
+	const directions: CountingDirection[] = [
+		"left_to_right",
+		"right_to_left",
+		"top_to_bottom",
+		"bottom_to_top",
+	];
+	const items: BarItemType[] = ["plate", "glass", "bottle", "can"];
+
+	return (
+		<div className="rounded-2xl border border-amber-300/40 bg-amber-50/50 p-4 text-sm dark:bg-amber-950/20">
+			<div className="grid gap-4 xl:grid-cols-[1fr_0.9fr]">
+				<div>
+					<div className="font-semibold text-base">Salida de barra</div>
+					<div className="mt-1 text-muted-foreground text-xs">
+						Cuenta por track único: el objeto recibe ID, cruza la línea en una
+						dirección y se registra una sola vez.
+					</div>
+					<div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+						{items.map((item) => (
+							<Button
+								key={item}
+								type="button"
+								size="sm"
+								variant={enabledBarItems[item] ? "default" : "outline"}
+								onClick={() =>
+									setEnabledBarItems((current) => ({
+										...current,
+										[item]: !current[item],
+									}))
+								}
+							>
+								{itemLabel(item)}
+							</Button>
+						))}
+					</div>
+					<div className="mt-3 grid gap-2 sm:grid-cols-2">
+						{directions.map((direction) => (
+							<Button
+								key={direction}
+								type="button"
+								size="sm"
+								variant={
+									countingDirection === direction ? "default" : "outline"
+								}
+								onClick={() => setCountingDirection(direction)}
+							>
+								{directionLabel(direction)}
+							</Button>
+						))}
+					</div>
+				</div>
+				<div className="grid grid-cols-2 gap-2 text-center text-xs">
+					<SmallStat label="visibles" value={barDetectionCount} />
+					<SmallStat
+						label="tracks activos"
+						value={barTracks.filter((track) => track.misses === 0).length}
+					/>
+					<SmallStat label="platos" value={exitSummary.plate} />
+					<SmallStat label="vasos/copas" value={exitSummary.glass} />
+					<SmallStat label="botellas" value={exitSummary.bottle} />
+					<SmallStat label="latas" value={exitSummary.can} />
+					<Button
+						type="button"
+						variant="outline"
+						size="sm"
+						className="col-span-2"
+						onClick={onReset}
+					>
+						Reiniciar conteo local
+					</Button>
+				</div>
+			</div>
+		</div>
+	);
+}
+
+function SmallStat({
+	label,
+	value,
+}: {
+	label: string;
+	value: React.ReactNode;
+}) {
+	return (
+		<div className="rounded-xl bg-background px-3 py-2">
+			<div className="font-bold text-base">{value}</div>
+			<div className="text-muted-foreground">{label}</div>
+		</div>
+	);
+}
+
+type ExitEventRow =
+	| BarExitEvent
+	| {
+			id: number;
+			trackId: string;
+			itemType: string;
+			confidenceAvg: number | null;
+			direction: string;
+			zone: string;
+			createdAt: string | null;
+	  };
+
+function ExitEventsTable({
+	events,
+	isLoading,
+}: {
+	events: ExitEventRow[];
+	isLoading: boolean;
+}) {
+	return (
+		<Table>
+			<TableHeader>
+				<TableRow>
+					<TableHead>Hora</TableHead>
+					<TableHead>Objeto</TableHead>
+					<TableHead>Track</TableHead>
+					<TableHead>Dirección</TableHead>
+					<TableHead>Confianza</TableHead>
+				</TableRow>
+			</TableHeader>
+			<TableBody>
+				{events.map((event) => {
+					const type = eventType(event);
+					const time = "time" in event ? event.time : event.createdAt;
+					return (
+						<TableRow key={eventRowKey(event)}>
+							<TableCell>
+								{time ? new Date(time).toLocaleTimeString() : "-"}
+							</TableCell>
+							<TableCell>
+								<Badge variant="outline">{itemLabel(type)}</Badge>
+							</TableCell>
+							<TableCell className="font-mono text-xs">
+								{eventTrackId(event)}
+							</TableCell>
+							<TableCell>{directionLabel(eventDirection(event))}</TableCell>
+							<TableCell>
+								{eventConfidence(event)
+									? `${Math.round((eventConfidence(event) ?? 0) * 100)}%`
+									: "-"}
+							</TableCell>
+						</TableRow>
+					);
+				})}
+				{!isLoading && events.length === 0 && (
+					<TableRow>
+						<TableCell
+							colSpan={5}
+							className="text-center text-muted-foreground"
+						>
+							Enciende la cámara, ajusta la línea y cruza un objeto frente a la
+							barra.
+						</TableCell>
+					</TableRow>
+				)}
+			</TableBody>
+		</Table>
 	);
 }
 
@@ -1087,4 +1558,68 @@ function isReliablePersonPrediction(
 		(width * height) / Math.max(1, canvas.width * canvas.height);
 	const heightRatio = height / Math.max(1, canvas.height);
 	return areaRatio >= 0.015 && heightRatio >= 0.14;
+}
+
+function lineToCanvas(
+	line: CountingLine,
+	canvas: HTMLCanvasElement,
+): CountingLine {
+	const normalized = normalizeLine(line);
+	return {
+		start: {
+			x: normalized.start.x * canvas.width,
+			y: normalized.start.y * canvas.height,
+		},
+		end: {
+			x: normalized.end.x * canvas.width,
+			y: normalized.end.y * canvas.height,
+		},
+	};
+}
+
+function directionLabel(direction: CountingDirection | string) {
+	const labels: Record<CountingDirection, string> = {
+		left_to_right: "Izquierda → derecha",
+		right_to_left: "Derecha → izquierda",
+		top_to_bottom: "Arriba → abajo",
+		bottom_to_top: "Abajo → arriba",
+	};
+	return labels[direction as CountingDirection] ?? direction;
+}
+
+function summarizeExitEvents(events: ExitEventRow[]) {
+	const summary: Record<BarItemType, number> = {
+		plate: 0,
+		glass: 0,
+		bottle: 0,
+		can: 0,
+	};
+	for (const event of events) {
+		const type = eventType(event);
+		summary[type] += 1;
+	}
+	return summary;
+}
+
+function eventType(event: ExitEventRow): BarItemType {
+	const type = "type" in event ? event.type : event.itemType;
+	if (type === "glass" || type === "bottle" || type === "can") return type;
+	return "plate";
+}
+
+function eventTrackId(event: ExitEventRow) {
+	return event.trackId;
+}
+
+function eventRowKey(event: ExitEventRow) {
+	if ("id" in event) return `saved-${event.id}`;
+	return `local-${event.trackId}-${event.time}`;
+}
+
+function eventDirection(event: ExitEventRow) {
+	return event.direction;
+}
+
+function eventConfidence(event: ExitEventRow) {
+	return "confidence" in event ? event.confidence : event.confidenceAvg;
 }

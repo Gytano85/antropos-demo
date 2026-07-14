@@ -241,6 +241,21 @@ export const cameraPresenceEvents = pgTable("camera_presence_events", {
 	created_at: timestamp("created_at").defaultNow(),
 });
 
+export const cameraBarExitEvents = pgTable("camera_bar_exit_events", {
+	id: serial("id").primaryKey(),
+	user_uid: varchar("user_uid", { length: 255 }).notNull(),
+	camera_id: integer("camera_id")
+		.references(() => cameraDevices.id)
+		.notNull(),
+	track_id: varchar("track_id", { length: 80 }).notNull(),
+	item_type: varchar("item_type", { length: 40 }).notNull(),
+	confidence_avg: real("confidence_avg"),
+	direction: varchar("direction", { length: 30 }).notNull(),
+	zone: varchar("zone", { length: 120 }).notNull().default("Barra"),
+	status: varchar("status", { length: 30 }).notNull().default("counted"),
+	created_at: timestamp("created_at").defaultNow(),
+});
+
 export const cameraAlerts = pgTable("camera_alerts", {
 	id: serial("id").primaryKey(),
 	user_uid: varchar("user_uid", { length: 255 }).notNull(),
