@@ -81,6 +81,7 @@ export default function CamerasPage() {
 	const videoRef = useRef<HTMLVideoElement | null>(null);
 	const ipImageRef = useRef<HTMLImageElement | null>(null);
 	const canvasRef = useRef<HTMLCanvasElement | null>(null);
+	const overlayCanvasRef = useRef<HTMLCanvasElement | null>(null);
 	const streamRef = useRef<MediaStream | null>(null);
 	const previousFrameRef = useRef<Uint8ClampedArray | null>(null);
 	const baselineFrameRef = useRef<Uint8ClampedArray | null>(null);
@@ -198,6 +199,8 @@ export default function CamerasPage() {
 		for (const track of streamRef.current?.getTracks() ?? []) {
 			track.stop();
 		}
+		const overlay = overlayCanvasRef.current;
+		overlay?.getContext("2d")?.clearRect(0, 0, overlay.width, overlay.height);
 		streamRef.current = null;
 		setRunning(false);
 	}, []);
@@ -491,6 +494,33 @@ export default function CamerasPage() {
 		[],
 	);
 
+	const drawDetections = useCallback(
+		(canvas: HTMLCanvasElement, people: DetectedObject[]) => {
+			const overlay = overlayCanvasRef.current;
+			if (!overlay) return;
+			overlay.width = canvas.width;
+			overlay.height = canvas.height;
+			const context = overlay.getContext("2d");
+			if (!context) return;
+			context.clearRect(0, 0, overlay.width, overlay.height);
+			context.lineWidth = Math.max(3, Math.round(canvas.width / 320));
+			context.font = `${Math.max(16, Math.round(canvas.width / 55))}px sans-serif`;
+			for (const person of people) {
+				const [x, y, width, height] = person.bbox;
+				context.strokeStyle = person.score >= 0.7 ? "#22c55e" : "#f59e0b";
+				context.fillStyle = "rgba(0,0,0,0.72)";
+				context.strokeRect(x, y, width, height);
+				const label = `persona ${Math.round(person.score * 100)}%`;
+				const labelWidth = context.measureText(label).width + 12;
+				const labelY = Math.max(0, y - 26);
+				context.fillRect(x, labelY, labelWidth, 24);
+				context.fillStyle = "#fff";
+				context.fillText(label, x + 6, labelY + 17);
+			}
+		},
+		[],
+	);
+
 	const detectOnce = useCallback(async () => {
 		if (!selected || !canvasRef.current || busy) return;
 		const isIpCamera = draft.sourceType === "ip_camera";
@@ -540,6 +570,7 @@ export default function CamerasPage() {
 				const people = predictions.filter((prediction) =>
 					isReliablePersonPrediction(prediction, canvas),
 				);
+				drawDetections(canvas, people);
 				const sample = sampleFromCounts({
 					personCount: people.length,
 					confidence:
@@ -590,6 +621,7 @@ export default function CamerasPage() {
 			}
 
 			if (window.FaceDetector) {
+				drawDetections(canvas, []);
 				const detector = new window.FaceDetector({
 					fastMode: true,
 					maxDetectedFaces: 20,
@@ -696,6 +728,7 @@ export default function CamerasPage() {
 		}
 	}, [
 		busy,
+		drawDetections,
 		getObjectDetector,
 		measureOccupancyAgainstBaseline,
 		draft.sourceType,
@@ -801,7 +834,7 @@ export default function CamerasPage() {
 						</CardDescription>
 					</CardHeader>
 					<CardContent className="space-y-4">
-						<div className="overflow-hidden rounded-2xl border bg-black">
+						<div className="relative overflow-hidden rounded-2xl border bg-black">
 							{draft.sourceType === "ip_camera" ? (
 								<img
 									ref={ipImageRef}
@@ -818,6 +851,10 @@ export default function CamerasPage() {
 									playsInline
 								/>
 							)}
+							<canvas
+								ref={overlayCanvasRef}
+								className="pointer-events-none absolute inset-0 h-full w-full"
+							/>
 						</div>
 						<canvas ref={canvasRef} className="hidden" />
 						<div className="flex flex-wrap items-center gap-2">

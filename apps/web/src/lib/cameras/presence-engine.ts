@@ -49,19 +49,28 @@ export function evaluatePresenceWindow(
 	const lastPositiveAt =
 		latestPositive?.time ?? options.previous?.lastPositiveAt ?? null;
 	const enoughSamples = totalSamples >= options.minSamples;
+	const newestSamples = windowSamples.slice(-2);
+	const consecutiveAbsent =
+		newestSamples.length >= 2 &&
+		newestSamples.every((sample) => sample.personCount === 0);
 	const present = enoughSamples && score >= options.minPositiveRatio;
 	const held =
+		!consecutiveAbsent &&
 		!present &&
 		lastPositiveAt !== null &&
 		options.now - lastPositiveAt <= options.holdMs &&
 		(options.previous?.personCount ?? 0) > 0;
-	const personCount = present
-		? conservativeCount(windowSamples)
-		: held
-			? (options.previous?.personCount ?? 1)
-			: 0;
+	const personCount = consecutiveAbsent
+		? 0
+		: present
+			? conservativeCount(windowSamples)
+			: held
+				? (options.previous?.personCount ?? 1)
+				: 0;
 	const status: PresenceState["status"] = present
-		? "present"
+		? consecutiveAbsent
+			? "absent"
+			: "present"
 		: held
 			? "probably_present"
 			: "absent";

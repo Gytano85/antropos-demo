@@ -75,4 +75,25 @@ describe("camera presence engine", () => {
 		expect(result.personCount).toBe(2);
 		expect(result.status).toBe("present");
 	});
+
+	it("clears presence after two consecutive empty samples", () => {
+		const result = evaluatePresenceWindow(
+			[
+				{ time: 0, personCount: 1, confidence: 0.9, source: "model" },
+				{ time: 1000, personCount: 1, confidence: 0.86, source: "model" },
+				{ time: 2000, personCount: 0, confidence: null, source: "none" },
+				{ time: 3000, personCount: 0, confidence: null, source: "none" },
+			],
+			{
+				now: 3000,
+				windowMs: 15_000,
+				holdMs: 5_000,
+				minPositiveRatio: 0.42,
+				minSamples: 2,
+			},
+		);
+
+		expect(result.personCount).toBe(0);
+		expect(result.status).toBe("absent");
+	});
 });
