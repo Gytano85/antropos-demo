@@ -21,6 +21,7 @@ export type ObjectCandidate = {
 	confidence: number;
 	bbox: [number, number, number, number];
 	label?: string;
+	source?: "motion" | "model";
 };
 
 export type ObjectTrack = {
@@ -29,11 +30,16 @@ export type ObjectTrack = {
 	confidence: number;
 	center: LinePoint;
 	previousCenter: LinePoint | null;
+	lastStableCenter: LinePoint | null;
+	lastSide: -1 | 0 | 1;
+	velocity: LinePoint;
 	bbox: [number, number, number, number];
+	label?: string;
 	firstSeenAt: number;
 	lastSeenAt: number;
 	hits: number;
 	misses: number;
+	travelDistance: number;
 	counted: boolean;
 };
 
@@ -43,6 +49,7 @@ export type BarExitEvent = {
 	confidence: number;
 	direction: CountingDirection;
 	time: number;
+	crossingPoint: LinePoint;
 };
 
 export type TrackingOptions = {
@@ -52,9 +59,16 @@ export type TrackingOptions = {
 	minHits: number;
 	maxMisses: number;
 	matchDistance: number;
+	lineTolerance?: number;
+	minTravelDistance?: number;
+	gatePadding?: number;
+	idPrefix?: string;
 };
 
 let trackSequence = 0;
+const trackSession = `${Date.now().toString(36)}-${Math.random()
+	.toString(36)
+	.slice(2, 7)}`;
 
 export function classifyBarCandidate(prediction: {
 	class: string;
@@ -70,6 +84,7 @@ export function classifyBarCandidate(prediction: {
 		confidence: prediction.score,
 		bbox: prediction.bbox,
 		label: prediction.class,
+		source: "model",
 	};
 }
 
@@ -78,37 +93,82 @@ export function updateObjectTracks(
 	candidates: ObjectCandidate[],
 	options: TrackingOptions,
 ): { tracks: ObjectTrack[]; events: BarExitEvent[] } {
-	const unmatchedCandidates = [...candidates];
-	const nextTracks: ObjectTrack[] = [];
 	const events: BarExitEvent[] = [];
+	const assignments = assignCandidates(tracks, candidates, options);
+	const assignedCandidates = new Set(
+		assignments.map((item) => item.candidateIndex),
+	);
+	const nextTracks: ObjectTrack[] = [];
 
-	for (const track of tracks) {
-		const matchIndex = findBestMatch(track, unmatchedCandidates, options);
-		if (matchIndex === -1) {
+	tracks.forEach((track, trackIndex) => {
+		const assignment = assignments.find(
+			(item) => item.trackIndex === trackIndex,
+		);
+		if (!assignment) {
 			const missed = { ...track, misses: track.misses + 1 };
 			if (missed.misses <= options.maxMisses) nextTracks.push(missed);
-			continue;
+			return;
 		}
 
-		const [candidate] = unmatchedCandidates.splice(matchIndex, 1);
+		const candidate = candidates[assignment.candidateIndex];
+		if (!candidate) return;
 		const center = bboxCenter(candidate.bbox);
+		const movement = {
+			x: center.x - track.center.x,
+			y: center.y - track.center.y,
+		};
+		const lineTolerance =
+			options.lineTolerance ?? Math.max(0.006, options.matchDistance * 0.045);
+		const currentSide = stableSide(center, options.line, lineTolerance);
+		const travelDistance =
+			track.travelDistance + pointDistance(track.center, center);
+		const genericCandidate = isGenericMotion(candidate);
+		const genericTrack = track.label === "motion-served-object";
+		const nextType =
+			genericCandidate && !genericTrack ? track.type : candidate.type;
+		const nextLabel =
+			genericCandidate && !genericTrack ? track.label : candidate.label;
 		const updated: ObjectTrack = {
 			...track,
-			type: candidate.type,
+			type: nextType,
+			label: nextLabel,
 			confidence: smoothConfidence(track.confidence, candidate.confidence),
 			previousCenter: track.center,
 			center,
 			bbox: candidate.bbox,
+			velocity: {
+				x: track.velocity.x * 0.55 + movement.x * 0.45,
+				y: track.velocity.y * 0.55 + movement.y * 0.45,
+			},
 			lastSeenAt: options.now,
 			hits: track.hits + 1,
 			misses: 0,
+			travelDistance,
 		};
 
-		if (
+		const minimumTravel =
+			options.minTravelDistance ??
+			Math.max(lineTolerance * 2.2, options.matchDistance * 0.12);
+		const crossed =
 			!updated.counted &&
 			updated.hits >= options.minHits &&
-			crossedLine(updated.previousCenter, updated.center, options)
-		) {
+			travelDistance >= minimumTravel &&
+			track.lastSide !== 0 &&
+			currentSide !== 0 &&
+			track.lastSide !== currentSide &&
+			movesInDirection(
+				track.lastStableCenter ?? track.center,
+				center,
+				options,
+			) &&
+			crossesFiniteLine(
+				track.lastStableCenter ?? track.center,
+				center,
+				options.line,
+				options.gatePadding,
+			);
+
+		if (crossed) {
 			updated.counted = true;
 			events.push({
 				trackId: updated.id,
@@ -116,28 +176,46 @@ export function updateObjectTracks(
 				confidence: updated.confidence,
 				direction: options.direction,
 				time: options.now,
+				crossingPoint: lineIntersection(
+					track.lastStableCenter ?? track.center,
+					center,
+					options.line,
+				),
 			});
 		}
 
+		if (currentSide !== 0) {
+			updated.lastSide = currentSide;
+			updated.lastStableCenter = center;
+		}
 		nextTracks.push(updated);
-	}
+	});
 
-	for (const candidate of unmatchedCandidates) {
+	candidates.forEach((candidate, candidateIndex) => {
+		if (assignedCandidates.has(candidateIndex)) return;
 		const center = bboxCenter(candidate.bbox);
+		const lineTolerance =
+			options.lineTolerance ?? Math.max(0.006, options.matchDistance * 0.045);
+		const side = stableSide(center, options.line, lineTolerance);
 		nextTracks.push({
-			id: `${candidate.type}_${++trackSequence}`,
+			id: `${options.idPrefix ?? trackSession}-${candidate.type}-${++trackSequence}`,
 			type: candidate.type,
 			confidence: candidate.confidence,
 			center,
 			previousCenter: null,
+			lastStableCenter: side === 0 ? null : center,
+			lastSide: side,
+			velocity: { x: 0, y: 0 },
 			bbox: candidate.bbox,
+			label: candidate.label,
 			firstSeenAt: options.now,
 			lastSeenAt: options.now,
 			hits: 1,
 			misses: 0,
+			travelDistance: 0,
 			counted: false,
 		});
-	}
+	});
 
 	return { tracks: nextTracks, events };
 }
@@ -172,6 +250,73 @@ export function itemLabel(type: BarItemType) {
 	return labels[type];
 }
 
+function assignCandidates(
+	tracks: ObjectTrack[],
+	candidates: ObjectCandidate[],
+	options: TrackingOptions,
+) {
+	const pairs: Array<{
+		trackIndex: number;
+		candidateIndex: number;
+		cost: number;
+	}> = [];
+
+	tracks.forEach((track, trackIndex) => {
+		candidates.forEach((candidate, candidateIndex) => {
+			if (!typesCompatible(track, candidate)) return;
+			const predicted = {
+				x: track.center.x + track.velocity.x * Math.min(3, track.misses + 1),
+				y: track.center.y + track.velocity.y * Math.min(3, track.misses + 1),
+			};
+			const distance = pointDistance(predicted, bboxCenter(candidate.bbox));
+			const adaptiveDistance =
+				options.matchDistance * (1 + Math.min(track.misses, 4) * 0.2);
+			if (distance > adaptiveDistance) return;
+			const overlap = intersectionOverUnion(track.bbox, candidate.bbox);
+			const sizePenalty = relativeSizeDifference(track.bbox, candidate.bbox);
+			const typePenalty = track.type === candidate.type ? 0 : 0.08;
+			pairs.push({
+				trackIndex,
+				candidateIndex,
+				cost:
+					(distance / Math.max(1e-6, adaptiveDistance)) * 0.58 +
+					(1 - overlap) * 0.22 +
+					sizePenalty * 0.2 +
+					typePenalty,
+			});
+		});
+	});
+
+	pairs.sort((a, b) => a.cost - b.cost);
+	const usedTracks = new Set<number>();
+	const usedCandidates = new Set<number>();
+	return pairs.filter((pair) => {
+		if (
+			usedTracks.has(pair.trackIndex) ||
+			usedCandidates.has(pair.candidateIndex)
+		) {
+			return false;
+		}
+		usedTracks.add(pair.trackIndex);
+		usedCandidates.add(pair.candidateIndex);
+		return true;
+	});
+}
+
+function typesCompatible(track: ObjectTrack, candidate: ObjectCandidate) {
+	return (
+		track.type === candidate.type ||
+		track.label === "motion-served-object" ||
+		isGenericMotion(candidate)
+	);
+}
+
+function isGenericMotion(candidate: ObjectCandidate) {
+	return (
+		candidate.source === "motion" || candidate.label === "motion-served-object"
+	);
+}
+
 function itemTypeFromLabel(label: string): BarItemType | null {
 	if (label === "cup" || label === "wine glass") return "glass";
 	if (label === "bottle") return "bottle";
@@ -183,60 +328,94 @@ function itemTypeFromLabel(label: string): BarItemType | null {
 }
 
 function minConfidenceForType(type: BarItemType) {
-	if (type === "plate") return 0.32;
-	if (type === "glass") return 0.35;
-	return 0.4;
+	if (type === "plate") return 0.3;
+	if (type === "glass") return 0.32;
+	return 0.36;
 }
 
-function findBestMatch(
-	track: ObjectTrack,
-	candidates: ObjectCandidate[],
-	options: TrackingOptions,
-) {
-	let bestIndex = -1;
-	let bestDistance = Number.POSITIVE_INFINITY;
-
-	candidates.forEach((candidate, index) => {
-		if (candidate.type !== track.type) return;
-		const distance = pointDistance(track.center, bboxCenter(candidate.bbox));
-		if (distance < bestDistance && distance <= options.matchDistance) {
-			bestDistance = distance;
-			bestIndex = index;
-		}
-	});
-
-	return bestIndex;
+function stableSide(
+	point: LinePoint,
+	line: CountingLine,
+	tolerance: number,
+): -1 | 0 | 1 {
+	const distance = signedDistanceToLine(point, line);
+	if (Math.abs(distance) <= tolerance) return 0;
+	return distance > 0 ? 1 : -1;
 }
 
-function crossedLine(
-	previous: LinePoint | null,
+function signedDistanceToLine(point: LinePoint, line: CountingLine) {
+	const dx = line.end.x - line.start.x;
+	const dy = line.end.y - line.start.y;
+	const length = Math.hypot(dx, dy);
+	if (length < 1e-6) return 0;
+	return (
+		(dx * (point.y - line.start.y) - dy * (point.x - line.start.x)) / length
+	);
+}
+
+function movesInDirection(
+	previous: LinePoint,
 	current: LinePoint,
 	options: TrackingOptions,
 ) {
-	if (!previous) return false;
-	const line = normalizeLine(options.line);
-	const previousSide = sideOfLine(previous, line);
-	const currentSide = sideOfLine(current, line);
-	if (previousSide === 0 || currentSide === 0) return false;
-	if (Math.sign(previousSide) === Math.sign(currentSide)) return false;
-
-	if (options.direction === "left_to_right") {
-		return current.x > previous.x && current.x >= line.start.x;
-	}
-	if (options.direction === "right_to_left") {
-		return current.x < previous.x && current.x <= line.start.x;
-	}
-	if (options.direction === "top_to_bottom") {
-		return current.y > previous.y && current.y >= line.start.y;
-	}
-	return current.y < previous.y && current.y <= line.start.y;
+	const dx = current.x - previous.x;
+	const dy = current.y - previous.y;
+	const epsilon = Math.max(0.001, (options.lineTolerance ?? 0) * 0.35);
+	if (options.direction === "left_to_right") return dx > epsilon;
+	if (options.direction === "right_to_left") return dx < -epsilon;
+	if (options.direction === "top_to_bottom") return dy > epsilon;
+	return dy < -epsilon;
 }
 
-function sideOfLine(point: LinePoint, line: CountingLine) {
+function crossesFiniteLine(
+	previous: LinePoint,
+	current: LinePoint,
+	line: CountingLine,
+	padding?: number,
+) {
+	const intersection = segmentIntersectionParameters(previous, current, line);
+	if (!intersection) return false;
+	const lineLength = pointDistance(line.start, line.end);
+	const normalizedPadding =
+		(padding ?? lineLength * 0.06) / Math.max(1e-6, lineLength);
 	return (
-		(line.end.x - line.start.x) * (point.y - line.start.y) -
-		(line.end.y - line.start.y) * (point.x - line.start.x)
+		intersection.pathT >= 0 &&
+		intersection.pathT <= 1 &&
+		intersection.lineT >= -normalizedPadding &&
+		intersection.lineT <= 1 + normalizedPadding
 	);
+}
+
+function lineIntersection(
+	previous: LinePoint,
+	current: LinePoint,
+	line: CountingLine,
+) {
+	const intersection = segmentIntersectionParameters(previous, current, line);
+	const pathT = intersection?.pathT ?? 0.5;
+	return {
+		x: previous.x + (current.x - previous.x) * pathT,
+		y: previous.y + (current.y - previous.y) * pathT,
+	};
+}
+
+function segmentIntersectionParameters(
+	pathStart: LinePoint,
+	pathEnd: LinePoint,
+	line: CountingLine,
+) {
+	const rx = pathEnd.x - pathStart.x;
+	const ry = pathEnd.y - pathStart.y;
+	const sx = line.end.x - line.start.x;
+	const sy = line.end.y - line.start.y;
+	const denominator = rx * sy - ry * sx;
+	if (Math.abs(denominator) < 1e-8) return null;
+	const qpx = line.start.x - pathStart.x;
+	const qpy = line.start.y - pathStart.y;
+	return {
+		pathT: (qpx * sy - qpy * sx) / denominator,
+		lineT: (qpx * ry - qpy * rx) / denominator,
+	};
 }
 
 function bboxCenter([x, y, width, height]: [number, number, number, number]) {
@@ -250,8 +429,31 @@ function pointDistance(a: LinePoint, b: LinePoint) {
 	return Math.hypot(a.x - b.x, a.y - b.y);
 }
 
+function relativeSizeDifference(
+	a: [number, number, number, number],
+	b: [number, number, number, number],
+) {
+	const areaA = Math.max(1e-6, a[2] * a[3]);
+	const areaB = Math.max(1e-6, b[2] * b[3]);
+	return Math.min(1, Math.abs(Math.log(areaA / areaB)) / 2);
+}
+
+function intersectionOverUnion(
+	a: [number, number, number, number],
+	b: [number, number, number, number],
+) {
+	const left = Math.max(a[0], b[0]);
+	const top = Math.max(a[1], b[1]);
+	const right = Math.min(a[0] + a[2], b[0] + b[2]);
+	const bottom = Math.min(a[1] + a[3], b[1] + b[3]);
+	const intersection = Math.max(0, right - left) * Math.max(0, bottom - top);
+	const areaA = a[2] * a[3];
+	const areaB = b[2] * b[3];
+	return intersection / Math.max(1e-6, areaA + areaB - intersection);
+}
+
 function smoothConfidence(previous: number, next: number) {
-	return Math.round((previous * 0.65 + next * 0.35) * 100) / 100;
+	return Math.round((previous * 0.62 + next * 0.38) * 100) / 100;
 }
 
 function clamp01(value: number) {
