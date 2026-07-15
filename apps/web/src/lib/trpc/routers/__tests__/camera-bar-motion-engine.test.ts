@@ -40,6 +40,59 @@ describe("bar motion engine", () => {
 		expect(result.foregroundRatio).toBeLessThan(0.01);
 	});
 
+	test("does not hallucinate objects from white-background compression blocks", () => {
+		const detector = new AdaptiveMotionDetector({ calibrationFrames: 4 });
+		detector.beginCalibration();
+		for (let index = 0; index < 4; index++) {
+			detector.analyze(solidFrame(160, 90, 245));
+		}
+		const compressed = solidFrame(160, 90, 245);
+		const blocks: Array<[number, number]> = [
+			[10, 12],
+			[32, 52],
+			[55, 18],
+			[78, 58],
+			[101, 24],
+			[124, 55],
+			[142, 10],
+		];
+		for (const [x, y] of blocks) {
+			paintRect(compressed, x, y, 10, 9, [215, 230, 250]);
+		}
+
+		const result = detector.analyze(compressed);
+
+		expect(result.candidates).toHaveLength(0);
+	});
+
+	test("compensates automatic exposure changes in a static scene", () => {
+		const detector = new AdaptiveMotionDetector({ calibrationFrames: 4 });
+		detector.beginCalibration();
+		for (let index = 0; index < 4; index++) {
+			detector.analyze(solidFrame(160, 90, 215));
+		}
+
+		for (const value of [247, 184, 244, 187, 241]) {
+			const result = detector.analyze(solidFrame(160, 90, value));
+			expect(result.state).toBe("ready");
+			expect(result.candidates).toHaveLength(0);
+		}
+	});
+
+	test("still detects a real object moving over a white background", () => {
+		const detector = new AdaptiveMotionDetector({ calibrationFrames: 4 });
+		detector.beginCalibration();
+		for (let index = 0; index < 4; index++) {
+			detector.analyze(solidFrame(160, 90, 245));
+		}
+		const frame = solidFrame(160, 90, 245);
+		paintRect(frame, 62, 34, 30, 22, [175, 90, 45]);
+
+		const result = detector.analyze(frame);
+
+		expect(result.candidates).toHaveLength(1);
+	});
+
 	test("stops detections when the whole scene changes", () => {
 		const detector = calibratedDetector();
 		let result = detector.analyze(solidFrame(96, 64, 180));
@@ -90,14 +143,25 @@ function frameWithRect(
 ) {
 	const frame = solidFrame(width, height, 42);
 	for (const [x, y, rectWidth, rectHeight] of rectangles) {
-		for (let py = y; py < y + rectHeight; py++) {
-			for (let px = x; px < x + rectWidth; px++) {
-				const index = (py * width + px) * 4;
-				frame.data[index] = 220;
-				frame.data[index + 1] = 120;
-				frame.data[index + 2] = 60;
-			}
-		}
+		paintRect(frame, x, y, rectWidth, rectHeight, [220, 120, 60]);
 	}
 	return frame;
+}
+
+function paintRect(
+	frame: ReturnType<typeof solidFrame>,
+	x: number,
+	y: number,
+	width: number,
+	height: number,
+	color: [number, number, number],
+) {
+	for (let py = y; py < Math.min(frame.height, y + height); py++) {
+		for (let px = x; px < Math.min(frame.width, x + width); px++) {
+			const index = (py * frame.width + px) * 4;
+			frame.data[index] = color[0];
+			frame.data[index + 1] = color[1];
+			frame.data[index + 2] = color[2];
+		}
+	}
 }

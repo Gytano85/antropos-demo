@@ -9,7 +9,7 @@ describe("bar camera pipeline", () => {
 	test("detects, tracks and counts one served object exactly once", () => {
 		const detector = calibratedDetector();
 		let tracks: ObjectTrack[] = [];
-		const events = [30, 44, 58, 72, 86, 100, 114].flatMap((x, index) => {
+		const events = [20, 32, 44, 56, 68, 80, 92, 104].flatMap((x, index) => {
 			const analysis = detector.analyze(
 				frameWithObjects([{ x, y: 38, width: 22, height: 18 }]),
 			);
@@ -17,7 +17,7 @@ describe("bar camera pipeline", () => {
 				now: index * 120,
 				line: { start: { x: 80, y: 8 }, end: { x: 80, y: 92 } },
 				direction: "left_to_right",
-				minHits: 3,
+				minHits: 5,
 				maxMisses: 4,
 				matchDistance: 34,
 				lineTolerance: 3,
@@ -38,7 +38,7 @@ describe("bar camera pipeline", () => {
 	test("counts two objects crossing together as two independent tracks", () => {
 		const detector = calibratedDetector();
 		let tracks: ObjectTrack[] = [];
-		const events = [30, 46, 62, 78, 94].flatMap((x, index) => {
+		const events = [20, 32, 44, 56, 68, 80, 92].flatMap((x, index) => {
 			const analysis = detector.analyze(
 				frameWithObjects([
 					{ x, y: 18, width: 20, height: 15 },
@@ -49,7 +49,7 @@ describe("bar camera pipeline", () => {
 				now: index * 120,
 				line: { start: { x: 80, y: 5 }, end: { x: 80, y: 96 } },
 				direction: "left_to_right",
-				minHits: 3,
+				minHits: 5,
 				maxMisses: 4,
 				matchDistance: 36,
 				lineTolerance: 3,
@@ -68,7 +68,7 @@ describe("bar camera pipeline", () => {
 	test("preserves the track across a brief occlusion before the line", () => {
 		const detector = calibratedDetector();
 		let tracks: ObjectTrack[] = [];
-		const positions: Array<number | null> = [28, 44, null, 66, 84, 102];
+		const positions: Array<number | null> = [20, 32, null, 44, 56, 68, 80, 92];
 		const events = positions.flatMap((x, index) => {
 			const analysis = detector.analyze(
 				x === null
@@ -79,7 +79,7 @@ describe("bar camera pipeline", () => {
 				now: index * 120,
 				line: { start: { x: 80, y: 8 }, end: { x: 80, y: 92 } },
 				direction: "left_to_right",
-				minHits: 3,
+				minHits: 5,
 				maxMisses: 4,
 				matchDistance: 42,
 				lineTolerance: 3,

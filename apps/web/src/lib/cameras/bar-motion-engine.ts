@@ -43,8 +43,8 @@ export type AdaptiveMotionOptions = {
 
 const DEFAULT_OPTIONS = {
 	calibrationFrames: 14,
-	thresholdFloor: 22,
-	minAreaRatio: 0.0016,
+	thresholdFloor: 24,
+	minAreaRatio: 0.0028,
 	maxAreaRatio: 0.24,
 	backgroundLearningRate: 0.012,
 };
@@ -115,6 +115,12 @@ export class AdaptiveMotionDetector {
 
 		const bounds = regionBounds(safeRegion, frame.width, frame.height);
 		const mask = new Uint8Array(frame.width * frame.height);
+		const strengthMap = new Float32Array(frame.width * frame.height);
+		const illuminationShift = estimateGlobalIlluminationShift(
+			frame,
+			background,
+			bounds,
+		);
 		let foregroundPixels = 0;
 		let regionPixels = 0;
 
@@ -123,9 +129,12 @@ export class AdaptiveMotionDetector {
 				const pixel = y * frame.width + x;
 				const dataIndex = pixel * 4;
 				const backgroundIndex = pixel * 3;
-				const r = frame.data[dataIndex] ?? 0;
-				const g = frame.data[dataIndex + 1] ?? 0;
-				const b = frame.data[dataIndex + 2] ?? 0;
+				const rawR = frame.data[dataIndex] ?? 0;
+				const rawG = frame.data[dataIndex + 1] ?? 0;
+				const rawB = frame.data[dataIndex + 2] ?? 0;
+				const r = clampColor(rawR - illuminationShift);
+				const g = clampColor(rawG - illuminationShift);
+				const b = clampColor(rawB - illuminationShift);
 				const br = background[backgroundIndex] ?? 0;
 				const bg = background[backgroundIndex + 1] ?? 0;
 				const bb = background[backgroundIndex + 2] ?? 0;
@@ -147,15 +156,16 @@ export class AdaptiveMotionDetector {
 				regionPixels += 1;
 				if (foreground) {
 					mask[pixel] = 1;
+					strengthMap[pixel] = difference / Math.max(1, threshold);
 					foregroundPixels += 1;
 				}
 
 				const learningRate = foreground
 					? this.options.backgroundLearningRate * 0.025
 					: this.options.backgroundLearningRate;
-				background[backgroundIndex] = blend(br, r, learningRate);
-				background[backgroundIndex + 1] = blend(bg, g, learningRate);
-				background[backgroundIndex + 2] = blend(bb, b, learningRate);
+				background[backgroundIndex] = blend(br, rawR, learningRate);
+				background[backgroundIndex + 1] = blend(bg, rawG, learningRate);
+				background[backgroundIndex + 2] = blend(bb, rawB, learningRate);
 			}
 		}
 
@@ -189,7 +199,12 @@ export class AdaptiveMotionDetector {
 			frame.height,
 			bounds,
 		);
-		const components = connectedComponents(cleanedMask, frame.width, bounds);
+		const components = connectedComponents(
+			cleanedMask,
+			strengthMap,
+			frame.width,
+			bounds,
+		);
 		const candidates = components
 			.map((component) => componentToCandidate(component, bounds, this.options))
 			.filter((candidate): candidate is ObjectCandidate => Boolean(candidate))
@@ -314,6 +329,10 @@ function componentToCandidate(
 	const areaRatio = component.area / regionArea;
 	const boxAreaRatio = (width * height) / regionArea;
 	const fillRatio = component.area / Math.max(1, width * height);
+	const meanStrength =
+		component.strengthSum / Math.max(1, component.sourcePixels);
+	const strongPixelRatio =
+		component.strongPixels / Math.max(1, component.sourcePixels);
 	const aspect = Math.max(
 		width / Math.max(1, height),
 		height / Math.max(1, width),
@@ -321,16 +340,23 @@ function componentToCandidate(
 	if (
 		areaRatio < options.minAreaRatio ||
 		boxAreaRatio > options.maxAreaRatio ||
-		width < 6 ||
-		height < 6 ||
+		width < 8 ||
+		height < 8 ||
 		fillRatio < 0.18 ||
-		aspect > 5.5
+		aspect > 5.5 ||
+		component.sourcePixels / regionArea < options.minAreaRatio ||
+		(meanStrength < 1.28 &&
+			strongPixelRatio < 0.16 &&
+			!(boxAreaRatio >= 0.018 && meanStrength >= 1.1))
 	) {
 		return null;
 	}
 	const confidence = Math.min(
 		0.93,
-		0.55 + Math.min(0.2, areaRatio * 5) + Math.min(0.18, fillRatio * 0.22),
+		0.5 +
+			Math.min(0.18, areaRatio * 5) +
+			Math.min(0.18, Math.max(0, meanStrength - 1) * 0.14) +
+			Math.min(0.12, strongPixelRatio * 0.18),
 	);
 	return {
 		type: "plate",
@@ -354,10 +380,14 @@ type MotionComponent = {
 	maxX: number;
 	maxY: number;
 	area: number;
+	sourcePixels: number;
+	strengthSum: number;
+	strongPixels: number;
 };
 
 function connectedComponents(
 	mask: Uint8Array,
+	strengthMap: Float32Array,
 	width: number,
 	bounds: PixelBounds,
 ) {
@@ -377,6 +407,9 @@ function connectedComponents(
 			let minY = y;
 			let maxX = x;
 			let maxY = y;
+			let sourcePixels = 0;
+			let strengthSum = 0;
+			let strongPixels = 0;
 			while (head < tail) {
 				const pixel = queue[head++];
 				const currentX = pixel % width;
@@ -386,6 +419,12 @@ function connectedComponents(
 				minY = Math.min(minY, currentY);
 				maxX = Math.max(maxX, currentX);
 				maxY = Math.max(maxY, currentY);
+				const strength = strengthMap[pixel] ?? 0;
+				if (strength > 0) {
+					sourcePixels += 1;
+					strengthSum += strength;
+					if (strength >= 1.55) strongPixels += 1;
+				}
 				for (let offsetY = -1; offsetY <= 1; offsetY++) {
 					for (let offsetX = -1; offsetX <= 1; offsetX++) {
 						if (offsetX === 0 && offsetY === 0) continue;
@@ -406,7 +445,16 @@ function connectedComponents(
 					}
 				}
 			}
-			components.push({ minX, minY, maxX, maxY, area });
+			components.push({
+				minX,
+				minY,
+				maxX,
+				maxY,
+				area,
+				sourcePixels,
+				strengthSum,
+				strongPixels,
+			});
 		}
 	}
 	return components.sort((a, b) => b.area - a.area);
@@ -534,8 +582,52 @@ function validateFrame(frame: PixelFrame) {
 	}
 }
 
+function estimateGlobalIlluminationShift(
+	frame: PixelFrame,
+	background: Float32Array,
+	bounds: PixelBounds,
+) {
+	const histogram = new Uint32Array(129);
+	let samples = 0;
+	for (let y = bounds.top; y < bounds.bottom; y += 3) {
+		for (let x = bounds.left; x < bounds.right; x += 3) {
+			const pixel = y * frame.width + x;
+			const source = pixel * 4;
+			const target = pixel * 3;
+			const difference = Math.round(
+				luma(
+					frame.data[source] ?? 0,
+					frame.data[source + 1] ?? 0,
+					frame.data[source + 2] ?? 0,
+				) -
+					luma(
+						background[target] ?? 0,
+						background[target + 1] ?? 0,
+						background[target + 2] ?? 0,
+					),
+			);
+			const bucket = Math.max(0, Math.min(128, difference + 64));
+			histogram[bucket] += 1;
+			samples += 1;
+		}
+	}
+	const midpoint = Math.ceil(samples / 2);
+	let accumulated = 0;
+	for (let bucket = 0; bucket < histogram.length; bucket++) {
+		accumulated += histogram[bucket] ?? 0;
+		if (accumulated >= midpoint) {
+			return Math.max(-35, Math.min(35, bucket - 64));
+		}
+	}
+	return 0;
+}
+
 function luma(r: number, g: number, b: number) {
 	return r * 0.299 + g * 0.587 + b * 0.114;
+}
+
+function clampColor(value: number) {
+	return Math.max(0, Math.min(255, value));
 }
 
 function blend(previous: number, next: number, rate: number) {

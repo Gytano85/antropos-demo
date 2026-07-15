@@ -484,7 +484,9 @@ export default function CamerasPage() {
 					34,
 				);
 
-				for (const track of tracks.filter((item) => item.misses <= 4)) {
+				for (const track of tracks.filter((item) =>
+					isConfirmedBarTrack(item, canvas.width),
+				)) {
 					const [x, y, width, height] = track.bbox;
 					context.strokeStyle = track.counted ? "#22c55e" : "#38bdf8";
 					context.fillStyle = "rgba(0,0,0,0.72)";
@@ -495,7 +497,11 @@ export default function CamerasPage() {
 						context.lineTo(track.center.x, track.center.y);
 						context.stroke();
 					}
-					const label = `${itemLabel(track.type)} ${track.id.replace("_", " #")} ${
+					const objectLabel =
+						track.label === "motion-served-object"
+							? "Objeto validado"
+							: itemLabel(track.type);
+					const label = `${objectLabel} ${track.id.replace("_", " #")} ${
 						track.counted ? "contado" : ""
 					}`;
 					const labelWidth = context.measureText(label).width + 12;
@@ -618,21 +624,27 @@ export default function CamerasPage() {
 				...motionResult.candidates,
 				...freshModelCandidates,
 			]).filter((candidate) => enabledBarItems[candidate.type]);
-			setBarDetectionCount(candidates.length);
+			const minimumTravel = Math.max(24, canvas.width * 0.04);
 			const tracked = updateObjectTracks(barTracksRef.current, candidates, {
 				now,
 				line: lineToCanvas(countingLine, canvas),
 				direction: countingDirection,
-				minHits: 3,
+				minHits: 5,
 				maxMisses: 12,
 				matchDistance: Math.max(canvas.width, canvas.height) * 0.2,
 				lineTolerance: Math.max(7, canvas.width * 0.008),
-				minTravelDistance: Math.max(22, canvas.width * 0.035),
+				minTravelDistance: minimumTravel,
 				gatePadding: Math.max(10, canvas.width * 0.025),
 				idPrefix: barSessionIdRef.current,
 			});
 			barTracksRef.current = tracked.tracks;
 			setBarTracks(tracked.tracks);
+			const confirmedTracks = tracked.tracks.filter((track) =>
+				isConfirmedBarTrack(track, canvas.width),
+			);
+			setBarDetectionCount(
+				confirmedTracks.filter((track) => track.misses <= 1).length,
+			);
 			if (tracked.events.length > 0) {
 				setBarEvents((current) => [...tracked.events, ...current].slice(0, 20));
 				for (const event of tracked.events) {
@@ -858,6 +870,9 @@ export default function CamerasPage() {
 	);
 	const savedExitEvents = data?.exitEvents ?? [];
 	const exitSummary = summarizeExitEvents([...barEvents, ...savedExitEvents]);
+	const confirmedBarTracks = barTracks.filter((track) =>
+		isConfirmedBarTrack(track, canvasRef.current?.width ?? 1280),
+	);
 
 	useEffect(() => {
 		const resetKey = `${mode}:${countingDirection}:${countingLine.start.x}:${countingLine.start.y}:${countingLine.end.x}:${countingLine.end.y}`;
@@ -1092,7 +1107,7 @@ export default function CamerasPage() {
 								enabledBarItems={enabledBarItems}
 								setEnabledBarItems={setEnabledBarItems}
 								barDetectionCount={barDetectionCount}
-								barTracks={barTracks}
+								barTracks={confirmedBarTracks}
 								motionState={barMotionState}
 								exitSummary={exitSummary}
 								onCalibrate={beginBarCalibration}
@@ -1145,9 +1160,7 @@ export default function CamerasPage() {
 							<BarEngineStatus
 								motionState={barMotionState}
 								visibleObjects={barDetectionCount}
-								activeTracks={
-									barTracks.filter((track) => track.misses <= 2).length
-								}
+								activeTracks={confirmedBarTracks.length}
 							/>
 						) : (
 							<DetectionStatus
@@ -1916,6 +1929,18 @@ function isReliablePersonPrediction(
 		return false;
 	}
 	return areaRatio >= 0.02 || prediction.score >= 0.58;
+}
+
+function isConfirmedBarTrack(track: ObjectTrack, referenceWidth: number) {
+	const netDisplacement = Math.hypot(
+		track.center.x - track.firstCenter.x,
+		track.center.y - track.firstCenter.y,
+	);
+	return (
+		track.hits >= 5 &&
+		track.misses <= 2 &&
+		(track.counted || netDisplacement >= Math.max(12, referenceWidth * 0.012))
+	);
 }
 
 function lineToCanvas(

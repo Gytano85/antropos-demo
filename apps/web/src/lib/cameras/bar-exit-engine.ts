@@ -29,6 +29,7 @@ export type ObjectTrack = {
 	type: BarItemType;
 	confidence: number;
 	center: LinePoint;
+	firstCenter: LinePoint;
 	previousCenter: LinePoint | null;
 	lastStableCenter: LinePoint | null;
 	lastSide: -1 | 0 | 1;
@@ -149,10 +150,16 @@ export function updateObjectTracks(
 		const minimumTravel =
 			options.minTravelDistance ??
 			Math.max(lineTolerance * 2.2, options.matchDistance * 0.12);
+		const directionalProgress = movementInConfiguredDirection(
+			track.firstCenter,
+			center,
+			options.direction,
+		);
 		const crossed =
 			!updated.counted &&
 			updated.hits >= options.minHits &&
 			travelDistance >= minimumTravel &&
+			directionalProgress >= minimumTravel &&
 			track.lastSide !== 0 &&
 			currentSide !== 0 &&
 			track.lastSide !== currentSide &&
@@ -202,6 +209,7 @@ export function updateObjectTracks(
 			type: candidate.type,
 			confidence: candidate.confidence,
 			center,
+			firstCenter: center,
 			previousCenter: null,
 			lastStableCenter: side === 0 ? null : center,
 			lastSide: side,
@@ -321,7 +329,7 @@ function itemTypeFromLabel(label: string): BarItemType | null {
 	if (label === "cup" || label === "wine glass") return "glass";
 	if (label === "bottle") return "bottle";
 	if (label === "can") return "can";
-	if (label === "bowl" || label === "dining table" || label === "plate") {
+	if (label === "bowl" || label === "plate") {
 		return "plate";
 	}
 	return null;
@@ -365,6 +373,17 @@ function movesInDirection(
 	if (options.direction === "right_to_left") return dx < -epsilon;
 	if (options.direction === "top_to_bottom") return dy > epsilon;
 	return dy < -epsilon;
+}
+
+function movementInConfiguredDirection(
+	start: LinePoint,
+	end: LinePoint,
+	direction: CountingDirection,
+) {
+	if (direction === "left_to_right") return end.x - start.x;
+	if (direction === "right_to_left") return start.x - end.x;
+	if (direction === "top_to_bottom") return end.y - start.y;
+	return start.y - end.y;
 }
 
 function crossesFiniteLine(

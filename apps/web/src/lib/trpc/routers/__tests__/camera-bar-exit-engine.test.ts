@@ -111,6 +111,13 @@ describe("bar exit engine", () => {
 				bbox: [0, 0, 1, 1],
 			})?.type,
 		).toBe("plate");
+		expect(
+			classifyBarCandidate({
+				class: "dining table",
+				score: 0.95,
+				bbox: [0, 0, 1, 1],
+			}),
+		).toBeNull();
 	});
 
 	test("uses the real pixel coordinate line instead of clamping it to one", () => {
