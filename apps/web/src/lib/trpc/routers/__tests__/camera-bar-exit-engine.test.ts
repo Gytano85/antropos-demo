@@ -6,6 +6,7 @@ import {
 	defaultCountingLine,
 	type ObjectCandidate,
 	type ObjectTrack,
+	placeCountingGate,
 	updateObjectTracks,
 } from "../../../cameras/bar-exit-engine";
 
@@ -312,6 +313,17 @@ describe("bar exit engine", () => {
 		});
 
 		expect(events).toHaveLength(0);
+	});
+
+	test("places a full gate with one point instead of editing two handles", () => {
+		expect(placeCountingGate("left_to_right", { x: 0.73, y: 0.2 })).toEqual({
+			start: { x: 0.73, y: 0.12 },
+			end: { x: 0.73, y: 0.88 },
+		});
+		expect(placeCountingGate("top_to_bottom", { x: 0.2, y: 0.64 })).toEqual({
+			start: { x: 0.12, y: 0.64 },
+			end: { x: 0.88, y: 0.64 },
+		});
 	});
 });
 

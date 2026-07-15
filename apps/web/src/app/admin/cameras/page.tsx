@@ -46,12 +46,12 @@ import {
 	type BarItemType,
 	type CountingDirection,
 	type CountingLine,
-	classifyBarCandidate,
 	defaultCountingLine,
 	itemLabel,
 	normalizeLine,
 	type ObjectCandidate,
 	type ObjectTrack,
+	placeCountingGate,
 	updateObjectTracks,
 } from "@/lib/cameras/bar-exit-engine";
 import {
@@ -61,6 +61,12 @@ import {
 	type NormalizedRegion,
 	regionAroundLine,
 } from "@/lib/cameras/bar-motion-engine";
+import {
+	BAR_SEMANTIC_PROMPT,
+	fuseSemanticWithMotion,
+	type GroundedDetection,
+	semanticCandidatesFromDetections,
+} from "@/lib/cameras/bar-semantic-engine";
 import {
 	evaluatePresenceWindow,
 	type PresenceSample,
@@ -85,6 +91,14 @@ type DetectionResult = {
 };
 
 type CameraMode = "presence" | "bar_exit";
+type BarSemanticStatus = "idle" | "loading" | "ready" | "unsupported" | "error";
+type BarSemanticDetector = (
+	image: string,
+	candidateLabels: string[],
+	options: { threshold: number; top_k: number },
+) => Promise<GroundedDetection[]>;
+const TRANSFORMERS_CDN_URL =
+	"https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.2.0";
 
 export default function CamerasPage() {
 	const trpc = useTRPC();
@@ -96,6 +110,9 @@ export default function CamerasPage() {
 	const motionCanvasRef = useRef<HTMLCanvasElement | null>(null);
 	const barModelCanvasRef = useRef<HTMLCanvasElement | null>(null);
 	const barModelBusyRef = useRef(false);
+	const barSemanticDetectorRef = useRef<BarSemanticDetector | null>(null);
+	const barSemanticDetectorPromiseRef =
+		useRef<Promise<BarSemanticDetector> | null>(null);
 	const barMotionDetectorRef = useRef(new AdaptiveMotionDetector());
 	const streamRef = useRef<MediaStream | null>(null);
 	const busyRef = useRef(false);
@@ -129,9 +146,6 @@ export default function CamerasPage() {
 	);
 	const [countingDirection, setCountingDirection] =
 		useState<CountingDirection>("left_to_right");
-	const [drawingPoint, setDrawingPoint] = useState<"start" | "end" | null>(
-		null,
-	);
 	const [barTracks, setBarTracks] = useState<ObjectTrack[]>([]);
 	const barTracksRef = useRef<ObjectTrack[]>([]);
 	const [barEvents, setBarEvents] = useState<BarExitEvent[]>([]);
@@ -147,6 +161,9 @@ export default function CamerasPage() {
 		foregroundRatio: 0,
 		noiseLevel: 0,
 	});
+	const [barSemanticStatus, setBarSemanticStatus] =
+		useState<BarSemanticStatus>("idle");
+	const [barSemanticProgress, setBarSemanticProgress] = useState(0);
 	const lastBarModelAtRef = useRef(0);
 	const lastBarModelResultAtRef = useRef(0);
 	const barSessionIdRef = useRef(createVisionSessionId());
@@ -318,6 +335,57 @@ export default function CamerasPage() {
 		return objectDetectorPromiseRef.current;
 	}, []);
 
+	const getBarSemanticDetector = useCallback(async () => {
+		if (barSemanticDetectorRef.current) return barSemanticDetectorRef.current;
+		if (!barSemanticDetectorPromiseRef.current) {
+			const gpuAvailable = Boolean(
+				(navigator as Navigator & { gpu?: unknown }).gpu,
+			);
+			if (!gpuAvailable) {
+				setBarSemanticStatus("unsupported");
+				throw new Error(
+					"Este navegador no ofrece WebGPU; el conteo visual se desactiva para no inventar platos.",
+				);
+			}
+			setBarSemanticStatus("loading");
+			setBarSemanticProgress(0);
+			barSemanticDetectorPromiseRef.current = (async () => {
+				const moduleUrl = TRANSFORMERS_CDN_URL;
+				const { pipeline } = (await import(
+					/* webpackIgnore: true */ moduleUrl
+				)) as {
+					pipeline: (
+						task: string,
+						model: string,
+						options: Record<string, unknown>,
+					) => Promise<unknown>;
+				};
+				const loaded = await pipeline(
+					"zero-shot-object-detection",
+					"onnx-community/grounding-dino-tiny-ONNX",
+					{
+						device: "webgpu",
+						dtype: "q4f16",
+						progress_callback: (event: unknown) => {
+							const progress = modelFileProgress(event);
+							if (progress !== null) setBarSemanticProgress(progress);
+						},
+					},
+				);
+				const detector = loaded as unknown as BarSemanticDetector;
+				barSemanticDetectorRef.current = detector;
+				setBarSemanticProgress(100);
+				setBarSemanticStatus("ready");
+				return detector;
+			})().catch((error) => {
+				barSemanticDetectorPromiseRef.current = null;
+				setBarSemanticStatus("error");
+				throw error;
+			});
+		}
+		return barSemanticDetectorPromiseRef.current;
+	}, []);
+
 	const stopCamera = useCallback(() => {
 		for (const track of streamRef.current?.getTracks() ?? []) {
 			track.stop();
@@ -355,6 +423,19 @@ export default function CamerasPage() {
 
 	const startCamera = async () => {
 		if (!selected || startingCamera) return;
+		const prepareDetector = () => {
+			const promise =
+				mode === "bar_exit" ? getBarSemanticDetector() : getObjectDetector();
+			void promise.catch((error) => {
+				if (mode === "bar_exit") {
+					setCameraError(
+						error instanceof Error
+							? error.message
+							: "No se pudo cargar el verificador visual.",
+					);
+				}
+			});
+		};
 		setStartingCamera(true);
 		setCameraError(null);
 		if (draft.sourceType === "ip_camera") {
@@ -364,7 +445,7 @@ export default function CamerasPage() {
 				return;
 			}
 			setRunning(true);
-			void getObjectDetector().catch(() => undefined);
+			prepareDetector();
 			toast.success("Camara IP activada.");
 			setStartingCamera(false);
 			return;
@@ -377,7 +458,7 @@ export default function CamerasPage() {
 				await videoRef.current.play();
 			}
 			setRunning(true);
-			void getObjectDetector().catch(() => undefined);
+			prepareDetector();
 			toast.success("Camara encendida.");
 		} catch (error) {
 			const message = cameraAccessMessage(error);
@@ -463,26 +544,30 @@ export default function CamerasPage() {
 					region.width * canvas.width,
 					region.height * canvas.height,
 				);
+				context.setLineDash([]);
+				context.strokeStyle = "rgba(245, 158, 11, 0.28)";
+				context.lineWidth = Math.max(28, canvas.width * 0.025);
+				context.beginPath();
+				context.moveTo(line.start.x, line.start.y);
+				context.lineTo(line.end.x, line.end.y);
+				context.stroke();
 				context.strokeStyle = "#f59e0b";
-				context.fillStyle = "#f59e0b";
+				context.lineWidth = Math.max(4, canvas.width * 0.004);
 				context.setLineDash([14, 10]);
 				context.beginPath();
 				context.moveTo(line.start.x, line.start.y);
 				context.lineTo(line.end.x, line.end.y);
 				context.stroke();
 				context.setLineDash([]);
-				context.beginPath();
-				context.arc(line.start.x, line.start.y, 8, 0, Math.PI * 2);
-				context.arc(line.end.x, line.end.y, 8, 0, Math.PI * 2);
-				context.fill();
 				context.fillStyle = "rgba(0,0,0,0.75)";
 				context.fillRect(12, 12, 280, 30);
 				context.fillStyle = "#fff";
 				context.fillText(
-					`Linea de salida: ${directionLabel(countingDirection)}`,
+					`Zona de salida: ${directionLabel(countingDirection)}`,
 					22,
 					34,
 				);
+				context.lineWidth = Math.max(3, Math.round(canvas.width / 320));
 
 				for (const track of tracks.filter((item) =>
 					isConfirmedBarTrack(item, canvas.width),
@@ -561,9 +646,10 @@ export default function CamerasPage() {
 			}
 
 			if (
-				objectDetectorRef.current &&
+				barSemanticDetectorRef.current &&
+				barSemanticStatus === "ready" &&
 				!barModelBusyRef.current &&
-				now - lastBarModelAtRef.current > 1_250
+				now - lastBarModelAtRef.current > 600
 			) {
 				lastBarModelAtRef.current = now;
 				if (!barModelCanvasRef.current) {
@@ -580,50 +666,60 @@ export default function CamerasPage() {
 					?.drawImage(canvas, 0, 0, modelCanvas.width, modelCanvas.height);
 				const scaleX = canvas.width / modelCanvas.width;
 				const scaleY = canvas.height / modelCanvas.height;
+				const imageDataUrl = modelCanvas.toDataURL("image/jpeg", 0.84);
 				barModelBusyRef.current = true;
-				void objectDetectorRef.current
-					.detect(modelCanvas, 30, 0.18)
+				void barSemanticDetectorRef
+					.current(imageDataUrl, [BAR_SEMANTIC_PROMPT], {
+						threshold: 0.18,
+						top_k: 20,
+					})
 					.then((predictions) => {
-						lastModelCandidatesRef.current = predictions
-							.map((prediction) =>
-								classifyBarCandidate({
-									class: prediction.class,
-									score: prediction.score,
-									bbox: [
-										prediction.bbox[0] * scaleX,
-										prediction.bbox[1] * scaleY,
-										prediction.bbox[2] * scaleX,
-										prediction.bbox[3] * scaleY,
-									],
-								}),
-							)
-							.filter((candidate): candidate is NonNullable<typeof candidate> =>
-								Boolean(candidate && enabledBarItems[candidate.type]),
-							);
+						lastModelCandidatesRef.current = semanticCandidatesFromDetections(
+							predictions,
+							{
+								width: modelCanvas.width,
+								height: modelCanvas.height,
+							},
+						)
+							.map((candidate) => ({
+								...candidate,
+								bbox: [
+									candidate.bbox[0] * scaleX,
+									candidate.bbox[1] * scaleY,
+									candidate.bbox[2] * scaleX,
+									candidate.bbox[3] * scaleY,
+								] as [number, number, number, number],
+							}))
+							.filter((candidate) => enabledBarItems[candidate.type]);
 						lastBarModelResultAtRef.current = Date.now();
 					})
-					.catch(() => {
+					.catch((error) => {
 						lastModelCandidatesRef.current = [];
+						setBarSemanticStatus("error");
+						setCameraError(
+							error instanceof Error
+								? `Falló la verificación visual: ${error.message}`
+								: "Falló la verificación visual.",
+						);
 					})
 					.finally(() => {
 						barModelBusyRef.current = false;
 					});
 			} else if (
-				!objectDetectorRef.current &&
-				detectorStatus !== "loading" &&
-				detectorStatus !== "error"
+				!barSemanticDetectorRef.current &&
+				barSemanticStatus === "idle"
 			) {
-				void getObjectDetector().catch(() => undefined);
+				void getBarSemanticDetector().catch(() => undefined);
 			}
 
 			const freshModelCandidates =
 				now - lastBarModelResultAtRef.current <= 1_500
 					? lastModelCandidatesRef.current
 					: [];
-			const candidates = mergeBarCandidates([
-				...motionResult.candidates,
-				...freshModelCandidates,
-			]).filter((candidate) => enabledBarItems[candidate.type]);
+			const candidates = fuseSemanticWithMotion(
+				motionResult.candidates,
+				freshModelCandidates,
+			).filter((candidate) => enabledBarItems[candidate.type]);
 			const minimumTravel = Math.max(24, canvas.width * 0.04);
 			const tracked = updateObjectTracks(barTracksRef.current, candidates, {
 				now,
@@ -667,13 +763,13 @@ export default function CamerasPage() {
 			});
 		},
 		[
+			barSemanticStatus,
 			countingDirection,
 			countingLine,
-			detectorStatus,
 			drawDetections,
 			draft.location,
 			enabledBarItems,
-			getObjectDetector,
+			getBarSemanticDetector,
 			mutateBarExit,
 			selected,
 		],
@@ -882,61 +978,45 @@ export default function CamerasPage() {
 	}, [mode, countingLine, countingDirection]);
 
 	useEffect(() => {
-		if (mode === "bar_exit" && running) beginBarCalibration();
-	}, [mode, running, beginBarCalibration]);
-
-	const updateLineFromPointer = useCallback(
-		(event: React.PointerEvent<HTMLCanvasElement>, point: "start" | "end") => {
-			const rect = event.currentTarget.getBoundingClientRect();
-			const nextPoint = {
-				x: (event.clientX - rect.left) / Math.max(1, rect.width),
-				y: (event.clientY - rect.top) / Math.max(1, rect.height),
-			};
-			setCountingLine((current) =>
-				normalizeLine({
-					...current,
-					[point]: nextPoint,
-				}),
-			);
-		},
-		[],
-	);
+		if (mode === "bar_exit") {
+			void getBarSemanticDetector().catch(() => undefined);
+			if (running) beginBarCalibration();
+			return;
+		}
+		if (!running) return;
+		void getObjectDetector().catch(() => undefined);
+	}, [
+		mode,
+		running,
+		beginBarCalibration,
+		getBarSemanticDetector,
+		getObjectDetector,
+	]);
 
 	const handleOverlayPointerDown = useCallback(
 		(event: React.PointerEvent<HTMLCanvasElement>) => {
 			if (mode !== "bar_exit") return;
 			const rect = event.currentTarget.getBoundingClientRect();
-			const point = {
-				x: (event.clientX - rect.left) / Math.max(1, rect.width),
-				y: (event.clientY - rect.top) / Math.max(1, rect.height),
-			};
-			const startDistance = Math.hypot(
-				point.x - countingLine.start.x,
-				point.y - countingLine.start.y,
+			setCountingLine(
+				placeCountingGate(countingDirection, {
+					x: (event.clientX - rect.left) / Math.max(1, rect.width),
+					y: (event.clientY - rect.top) / Math.max(1, rect.height),
+				}),
 			);
-			const endDistance = Math.hypot(
-				point.x - countingLine.end.x,
-				point.y - countingLine.end.y,
-			);
-			const selectedPoint = startDistance <= endDistance ? "start" : "end";
-			setDrawingPoint(selectedPoint);
-			updateLineFromPointer(event, selectedPoint);
 		},
-		[countingLine, mode, updateLineFromPointer],
-	);
-
-	const handleOverlayPointerMove = useCallback(
-		(event: React.PointerEvent<HTMLCanvasElement>) => {
-			if (mode !== "bar_exit" || !drawingPoint) return;
-			updateLineFromPointer(event, drawingPoint);
-		},
-		[drawingPoint, mode, updateLineFromPointer],
+		[countingDirection, mode],
 	);
 
 	const changeCountingDirection = useCallback(
 		(direction: CountingDirection) => {
 			setCountingDirection(direction);
-			setCountingLine((current) => orientLineForDirection(current, direction));
+			setCountingLine((current) => {
+				const center = {
+					x: (current.start.x + current.end.x) / 2,
+					y: (current.start.y + current.end.y) / 2,
+				};
+				return placeCountingGate(direction, center);
+			});
 		},
 		[],
 	);
@@ -951,20 +1031,31 @@ export default function CamerasPage() {
 							<h1 className="font-bold text-2xl">Cámaras operativas</h1>
 						</div>
 						<p className="mt-1 text-muted-foreground text-sm">
-							Detección local para presencia y conteo de salida de barra con
-							línea configurable.
+							Detección local para presencia y conteo de pedidos al salir de
+							barra.
 						</p>
 					</div>
 					<Badge
-						variant={detectorStatus === "error" ? "destructive" : "default"}
-					>
-						{detectorStatus === "ready"
-							? "Detector local listo"
-							: detectorStatus === "loading"
-								? "Cargando detector"
+						variant={
+							mode === "bar_exit"
+								? barSemanticStatus === "error" ||
+									barSemanticStatus === "unsupported"
+									? "destructive"
+									: "default"
 								: detectorStatus === "error"
-									? "Detector local con error"
-									: "Detector local"}
+									? "destructive"
+									: "default"
+						}
+					>
+						{mode === "bar_exit"
+							? semanticStatusLabel(barSemanticStatus, barSemanticProgress)
+							: detectorStatus === "ready"
+								? "Detector local listo"
+								: detectorStatus === "loading"
+									? "Cargando detector"
+									: detectorStatus === "error"
+										? "Detector local con error"
+										: "Detector local"}
 					</Badge>
 				</div>
 				<div className="mt-4 grid gap-2 sm:grid-cols-2">
@@ -1021,14 +1112,14 @@ export default function CamerasPage() {
 						<CardTitle className="flex items-center gap-2">
 							<CameraIcon className="h-5 w-5" />
 							{mode === "bar_exit"
-								? "Conteo por línea de salida"
+								? "Conteo en salida de barra"
 								: draft.sourceType === "ip_camera"
 									? "Camara IP / stream"
 									: "Webcam de prueba"}
 						</CardTitle>
 						<CardDescription>
 							{mode === "bar_exit"
-								? "Arrastra los puntos naranjas para colocar la línea. Solo se cuenta cuando el objeto cruza en la dirección configurada."
+								? "Toca una vez sobre el video donde salen los pedidos. La zona se orienta sola y solo cuenta objetos verificados."
 								: "La webcam sirve para demo. Para camara IP usa una URL HTTP/MJPEG o snapshot accesible desde la misma red."}
 						</CardDescription>
 					</CardHeader>
@@ -1054,12 +1145,9 @@ export default function CamerasPage() {
 							<canvas
 								ref={overlayCanvasRef}
 								onPointerDown={handleOverlayPointerDown}
-								onPointerMove={handleOverlayPointerMove}
-								onPointerUp={() => setDrawingPoint(null)}
-								onPointerLeave={() => setDrawingPoint(null)}
 								className={`absolute inset-0 h-full w-full ${
 									mode === "bar_exit"
-										? "cursor-crosshair touch-none"
+										? "cursor-pointer touch-none"
 										: "pointer-events-none"
 								}`}
 							/>
@@ -1111,6 +1199,14 @@ export default function CamerasPage() {
 								motionState={barMotionState}
 								exitSummary={exitSummary}
 								onCalibrate={beginBarCalibration}
+								onCenterGate={() =>
+									setCountingLine(
+										placeCountingGate(countingDirection, {
+											x: 0.5,
+											y: 0.5,
+										}),
+									)
+								}
 								onReset={() => {
 									beginBarCalibration();
 									setBarEvents([]);
@@ -1159,6 +1255,8 @@ export default function CamerasPage() {
 						{mode === "bar_exit" ? (
 							<BarEngineStatus
 								motionState={barMotionState}
+								semanticStatus={barSemanticStatus}
+								semanticProgress={barSemanticProgress}
 								visibleObjects={barDetectionCount}
 								activeTracks={confirmedBarTracks.length}
 							/>
@@ -1379,7 +1477,7 @@ export default function CamerasPage() {
 						</CardTitle>
 						<CardDescription>
 							{mode === "bar_exit"
-								? "Objetos contados al cruzar la línea de salida."
+								? "Pedidos verificados al cruzar la zona de salida."
 								: "Muestras guardadas para comprobar que el módulo está trabajando."}
 						</CardDescription>
 					</CardHeader>
@@ -1476,6 +1574,7 @@ function BarExitPanel({
 	motionState,
 	exitSummary,
 	onCalibrate,
+	onCenterGate,
 	onReset,
 }: {
 	countingDirection: CountingDirection;
@@ -1494,6 +1593,7 @@ function BarExitPanel({
 	};
 	exitSummary: Record<BarItemType, number>;
 	onCalibrate: () => void;
+	onCenterGate: () => void;
 	onReset: () => void;
 }) {
 	const directions: CountingDirection[] = [
@@ -1534,10 +1634,25 @@ function BarExitPanel({
 						</div>
 					</div>
 				</div>
-				<Button type="button" size="sm" variant="outline" onClick={onCalibrate}>
-					<RefreshCwIcon className="mr-2 h-4 w-4" />
-					Calibrar zona vacía
-				</Button>
+				<div className="flex flex-wrap gap-2">
+					<Button
+						type="button"
+						size="sm"
+						variant="outline"
+						onClick={onCenterGate}
+					>
+						Centrar salida
+					</Button>
+					<Button
+						type="button"
+						size="sm"
+						variant="outline"
+						onClick={onCalibrate}
+					>
+						<RefreshCwIcon className="mr-2 h-4 w-4" />
+						Calibrar zona vacía
+					</Button>
+				</div>
 			</div>
 			<div className="grid gap-4 xl:grid-cols-[1fr_0.9fr]">
 				<div>
@@ -1680,8 +1795,8 @@ function ExitEventsTable({
 							colSpan={5}
 							className="text-center text-muted-foreground"
 						>
-							Enciende la cámara, ajusta la línea y cruza un objeto frente a la
-							barra.
+							Enciende la cámara, toca la salida en el video y cruza un pedido
+							frente a la barra.
 						</TableCell>
 					</TableRow>
 				)}
@@ -1738,6 +1853,8 @@ function LabeledInput({
 
 function BarEngineStatus({
 	motionState,
+	semanticStatus,
+	semanticProgress,
 	visibleObjects,
 	activeTracks,
 }: {
@@ -1747,9 +1864,41 @@ function BarEngineStatus({
 		foregroundRatio: number;
 		noiseLevel: number;
 	};
+	semanticStatus: BarSemanticStatus;
+	semanticProgress: number;
 	visibleObjects: number;
 	activeTracks: number;
 }) {
+	if (semanticStatus === "unsupported" || semanticStatus === "error") {
+		return (
+			<div className="flex items-start gap-2 rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-destructive text-sm">
+				<AlertTriangleIcon className="mt-0.5 h-4 w-4" />
+				<div>
+					<div className="font-medium">Verificación visual desactivada</div>
+					<div>
+						{semanticStatus === "unsupported"
+							? "Usa Chrome o Edge con WebGPU. No se contarán movimientos sin verificar."
+							: "El modelo visual falló. No se contarán objetos hasta recargarlo."}
+					</div>
+				</div>
+			</div>
+		);
+	}
+
+	if (semanticStatus === "loading") {
+		return (
+			<div className="rounded-xl border border-sky-300 bg-sky-50 p-3 text-sky-950 text-sm dark:bg-sky-950/30 dark:text-sky-100">
+				<div className="flex items-center gap-2 font-medium">
+					<RefreshCwIcon className="h-4 w-4 animate-spin" />
+					Preparando detector de platos y bebidas ({semanticProgress}%)
+				</div>
+				<div className="mt-1 text-xs opacity-80">
+					La primera descarga es pesada; después queda guardada en el navegador.
+				</div>
+			</div>
+		);
+	}
+
 	if (motionState.state === "calibrating") {
 		return (
 			<div className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-amber-950 text-sm dark:bg-amber-950/30 dark:text-amber-100">
@@ -1776,7 +1925,7 @@ function BarEngineStatus({
 		);
 	}
 
-	if (motionState.state !== "ready") {
+	if (motionState.state !== "ready" || semanticStatus !== "ready") {
 		return (
 			<div className="rounded-xl border bg-muted p-3 text-muted-foreground text-sm">
 				Enciende la cámara y calibra la zona antes de contar salidas.
@@ -1788,7 +1937,7 @@ function BarEngineStatus({
 		<div className="flex flex-col gap-2 rounded-xl border border-emerald-300/50 bg-emerald-50 p-3 text-emerald-950 text-sm sm:flex-row sm:items-center sm:justify-between dark:bg-emerald-950/25 dark:text-emerald-100">
 			<div className="flex items-center gap-2 font-medium">
 				<CheckCircle2Icon className="h-4 w-4" />
-				Seguimiento activo
+				Detección visual y seguimiento activos
 			</div>
 			<div className="flex gap-4 text-xs">
 				<span>{visibleObjects} objeto(s) visibles</span>
@@ -1960,34 +2109,6 @@ function lineToCanvas(
 	};
 }
 
-function orientLineForDirection(
-	line: CountingLine,
-	direction: CountingDirection,
-): CountingLine {
-	const horizontalTravel =
-		direction === "left_to_right" || direction === "right_to_left";
-	const center = {
-		x: (line.start.x + line.end.x) / 2,
-		y: (line.start.y + line.end.y) / 2,
-	};
-	const currentLength = Math.hypot(
-		line.end.x - line.start.x,
-		line.end.y - line.start.y,
-	);
-	const length = Math.min(0.9, Math.max(0.35, currentLength));
-	return normalizeLine(
-		horizontalTravel
-			? {
-					start: { x: center.x, y: center.y - length / 2 },
-					end: { x: center.x, y: center.y + length / 2 },
-				}
-			: {
-					start: { x: center.x - length / 2, y: center.y },
-					end: { x: center.x + length / 2, y: center.y },
-				},
-	);
-}
-
 function analyzeMovingServedObjects(
 	source: HTMLCanvasElement,
 	motionCanvasRef: React.MutableRefObject<HTMLCanvasElement | null>,
@@ -2036,77 +2157,33 @@ function analyzeMovingServedObjects(
 	};
 }
 
-function mergeBarCandidates(candidates: ObjectCandidate[]) {
-	const motionCandidates = candidates.filter(
-		(candidate) => candidate.source === "motion",
-	);
-	const modelCandidates = candidates.filter(
-		(candidate) => candidate.source === "model",
-	);
-	return motionCandidates
-		.map((motionCandidate) => {
-			const modelCandidate = modelCandidates
-				.filter((candidate) =>
-					candidateBoxesBelongTogether(motionCandidate, candidate),
-				)
-				.sort(
-					(a, b) =>
-						intersectionOverUnion(b.bbox, motionCandidate.bbox) -
-						intersectionOverUnion(a.bbox, motionCandidate.bbox),
-				)[0];
-			if (!modelCandidate) return motionCandidate;
-			return {
-				...motionCandidate,
-				type: modelCandidate.type,
-				label: modelCandidate.label,
-				confidence: Math.max(
-					motionCandidate.confidence,
-					modelCandidate.confidence,
-				),
-			};
-		})
-		.slice(0, 12);
+function modelFileProgress(event: unknown) {
+	if (!event || typeof event !== "object") return null;
+	const progressEvent = event as {
+		progress?: unknown;
+		total?: unknown;
+		file?: unknown;
+		name?: unknown;
+	};
+	if (typeof progressEvent.progress !== "number") return null;
+	const total =
+		typeof progressEvent.total === "number" ? progressEvent.total : 0;
+	const file = String(progressEvent.file ?? progressEvent.name ?? "");
+	if (total < 20_000_000 && !/\.onnx(?:_data)?$/i.test(file)) return null;
+	return Math.max(0, Math.min(100, Math.round(progressEvent.progress)));
 }
 
-function candidateBoxesBelongTogether(a: ObjectCandidate, b: ObjectCandidate) {
-	const eitherIsMotion = a.source === "motion" || b.source === "motion";
-	if (!eitherIsMotion && a.type !== b.type) return false;
-	if (intersectionOverUnion(a.bbox, b.bbox) > (eitherIsMotion ? 0.16 : 0.35)) {
-		return true;
-	}
-	const centerA = {
-		x: a.bbox[0] + a.bbox[2] / 2,
-		y: a.bbox[1] + a.bbox[3] / 2,
-	};
-	const centerB = {
-		x: b.bbox[0] + b.bbox[2] / 2,
-		y: b.bbox[1] + b.bbox[3] / 2,
-	};
-	const distance = Math.hypot(centerA.x - centerB.x, centerA.y - centerB.y);
-	const referenceSize = Math.max(
-		12,
-		Math.min(Math.max(a.bbox[2], a.bbox[3]), Math.max(b.bbox[2], b.bbox[3])),
-	);
-	return distance <= referenceSize * 0.42;
-}
-
-function intersectionOverUnion(
-	a: [number, number, number, number],
-	b: [number, number, number, number],
-) {
-	const left = Math.max(a[0], b[0]);
-	const top = Math.max(a[1], b[1]);
-	const right = Math.min(a[0] + a[2], b[0] + b[2]);
-	const bottom = Math.min(a[1] + a[3], b[1] + b[3]);
-	const intersection = Math.max(0, right - left) * Math.max(0, bottom - top);
-	const areaA = a[2] * a[3];
-	const areaB = b[2] * b[3];
-	return intersection / Math.max(1, areaA + areaB - intersection);
+function semanticStatusLabel(status: BarSemanticStatus, progress: number) {
+	if (status === "ready") return "Detector visual listo";
+	if (status === "loading") return `Descargando detector ${progress}%`;
+	if (status === "unsupported") return "WebGPU no disponible";
+	if (status === "error") return "Detector visual con error";
+	return "Detector visual";
 }
 
 async function openCameraStream() {
 	try {
-		return await navigator.mediaDevices.getUserMedia({
+		return await requestCameraStream({
 			video: {
 				width: { ideal: 1280 },
 				height: { ideal: 720 },
@@ -2120,10 +2197,33 @@ async function openCameraStream() {
 			error instanceof DOMException &&
 			(error.name === "OverconstrainedError" || error.name === "NotFoundError")
 		) {
-			return navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+			return requestCameraStream({ video: true, audio: false });
 		}
 		throw error;
 	}
+}
+
+function requestCameraStream(constraints: MediaStreamConstraints) {
+	let expired = false;
+	let timeoutId: ReturnType<typeof setTimeout> | undefined;
+	const request = navigator.mediaDevices.getUserMedia(constraints);
+	void request.then((stream) => {
+		if (!expired) return;
+		for (const track of stream.getTracks()) track.stop();
+	});
+	const timeout = new Promise<never>((_, reject) => {
+		timeoutId = setTimeout(() => {
+			expired = true;
+			reject(
+				new Error(
+					"No se recibió permiso para usar la cámara. Autoriza la webcam y vuelve a intentarlo.",
+				),
+			);
+		}, 20_000);
+	});
+	return Promise.race([request, timeout]).finally(() => {
+		if (timeoutId) clearTimeout(timeoutId);
+	});
 }
 
 function cameraAccessMessage(error: unknown) {

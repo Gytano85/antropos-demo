@@ -235,6 +235,23 @@ export function defaultCountingLine(): CountingLine {
 	};
 }
 
+export function placeCountingGate(
+	direction: CountingDirection,
+	point: LinePoint,
+): CountingLine {
+	const horizontalTravel =
+		direction === "left_to_right" || direction === "right_to_left";
+	return horizontalTravel
+		? {
+				start: { x: clampGatePosition(point.x), y: 0.12 },
+				end: { x: clampGatePosition(point.x), y: 0.88 },
+			}
+		: {
+				start: { x: 0.12, y: clampGatePosition(point.y) },
+				end: { x: 0.88, y: clampGatePosition(point.y) },
+			};
+}
+
 export function normalizeLine(line: CountingLine): CountingLine {
 	return {
 		start: {
@@ -478,4 +495,9 @@ function smoothConfidence(previous: number, next: number) {
 function clamp01(value: number) {
 	if (!Number.isFinite(value)) return 0;
 	return Math.min(1, Math.max(0, value));
+}
+
+function clampGatePosition(value: number) {
+	if (!Number.isFinite(value)) return 0.5;
+	return Math.min(0.9, Math.max(0.1, value));
 }

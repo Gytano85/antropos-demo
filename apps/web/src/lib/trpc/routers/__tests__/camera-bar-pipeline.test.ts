@@ -1,9 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import {
+	type ObjectCandidate,
 	type ObjectTrack,
 	updateObjectTracks,
 } from "../../../cameras/bar-exit-engine";
 import { AdaptiveMotionDetector } from "../../../cameras/bar-motion-engine";
+import { fuseSemanticWithMotion } from "../../../cameras/bar-semantic-engine";
 
 describe("bar camera pipeline", () => {
 	test("detects, tracks and counts one served object exactly once", () => {
@@ -13,18 +15,22 @@ describe("bar camera pipeline", () => {
 			const analysis = detector.analyze(
 				frameWithObjects([{ x, y: 38, width: 22, height: 18 }]),
 			);
-			const tracked = updateObjectTracks(tracks, analysis.candidates, {
-				now: index * 120,
-				line: { start: { x: 80, y: 8 }, end: { x: 80, y: 92 } },
-				direction: "left_to_right",
-				minHits: 5,
-				maxMisses: 4,
-				matchDistance: 34,
-				lineTolerance: 3,
-				minTravelDistance: 24,
-				gatePadding: 4,
-				idPrefix: "pipeline",
-			});
+			const tracked = updateObjectTracks(
+				tracks,
+				verified(analysis.candidates),
+				{
+					now: index * 120,
+					line: { start: { x: 80, y: 8 }, end: { x: 80, y: 92 } },
+					direction: "left_to_right",
+					minHits: 5,
+					maxMisses: 4,
+					matchDistance: 34,
+					lineTolerance: 3,
+					minTravelDistance: 24,
+					gatePadding: 4,
+					idPrefix: "pipeline",
+				},
+			);
 			tracks = tracked.tracks;
 			return tracked.events;
 		});
@@ -45,18 +51,22 @@ describe("bar camera pipeline", () => {
 					{ x: x - 4, y: 67, width: 22, height: 16 },
 				]),
 			);
-			const tracked = updateObjectTracks(tracks, analysis.candidates, {
-				now: index * 120,
-				line: { start: { x: 80, y: 5 }, end: { x: 80, y: 96 } },
-				direction: "left_to_right",
-				minHits: 5,
-				maxMisses: 4,
-				matchDistance: 36,
-				lineTolerance: 3,
-				minTravelDistance: 24,
-				gatePadding: 4,
-				idPrefix: "pipeline-two",
-			});
+			const tracked = updateObjectTracks(
+				tracks,
+				verified(analysis.candidates),
+				{
+					now: index * 120,
+					line: { start: { x: 80, y: 5 }, end: { x: 80, y: 96 } },
+					direction: "left_to_right",
+					minHits: 5,
+					maxMisses: 4,
+					matchDistance: 36,
+					lineTolerance: 3,
+					minTravelDistance: 24,
+					gatePadding: 4,
+					idPrefix: "pipeline-two",
+				},
+			);
 			tracks = tracked.tracks;
 			return tracked.events;
 		});
@@ -75,18 +85,22 @@ describe("bar camera pipeline", () => {
 					? solidFrame(160, 100, 38)
 					: frameWithObjects([{ x, y: 40, width: 22, height: 18 }]),
 			);
-			const tracked = updateObjectTracks(tracks, analysis.candidates, {
-				now: index * 120,
-				line: { start: { x: 80, y: 8 }, end: { x: 80, y: 92 } },
-				direction: "left_to_right",
-				minHits: 5,
-				maxMisses: 4,
-				matchDistance: 42,
-				lineTolerance: 3,
-				minTravelDistance: 24,
-				gatePadding: 4,
-				idPrefix: "pipeline-occluded",
-			});
+			const tracked = updateObjectTracks(
+				tracks,
+				verified(analysis.candidates),
+				{
+					now: index * 120,
+					line: { start: { x: 80, y: 8 }, end: { x: 80, y: 92 } },
+					direction: "left_to_right",
+					minHits: 5,
+					maxMisses: 4,
+					matchDistance: 42,
+					lineTolerance: 3,
+					minTravelDistance: 24,
+					gatePadding: 4,
+					idPrefix: "pipeline-occluded",
+				},
+			);
 			tracks = tracked.tracks;
 			return tracked.events;
 		});
@@ -94,7 +108,43 @@ describe("bar camera pipeline", () => {
 		expect(events).toHaveLength(1);
 		expect(tracks).toHaveLength(1);
 	});
+
+	test("never starts a track from motion without visual verification", () => {
+		const detector = calibratedDetector();
+		const analysis = detector.analyze(
+			frameWithObjects([{ x: 42, y: 38, width: 22, height: 18 }]),
+		);
+		const candidates = fuseSemanticWithMotion(analysis.candidates, []);
+		const tracked = updateObjectTracks([], candidates, {
+			now: 120,
+			line: { start: { x: 80, y: 8 }, end: { x: 80, y: 92 } },
+			direction: "left_to_right",
+			minHits: 5,
+			maxMisses: 4,
+			matchDistance: 34,
+		});
+
+		expect(candidates).toHaveLength(0);
+		expect(tracked.tracks).toHaveLength(0);
+		expect(tracked.events).toHaveLength(0);
+	});
 });
+
+function verified(motionCandidates: ObjectCandidate[]) {
+	const semanticCandidates = motionCandidates.map((candidate) => ({
+		...candidate,
+		bbox: [
+			candidate.bbox[0] - 2,
+			candidate.bbox[1] - 2,
+			candidate.bbox[2] + 4,
+			candidate.bbox[3] + 4,
+		] as [number, number, number, number],
+		confidence: 0.72,
+		label: "plate of food",
+		source: "model" as const,
+	}));
+	return fuseSemanticWithMotion(motionCandidates, semanticCandidates);
+}
 
 function calibratedDetector() {
 	const detector = new AdaptiveMotionDetector({
