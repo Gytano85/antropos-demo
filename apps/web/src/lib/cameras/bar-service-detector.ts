@@ -137,29 +137,27 @@ export function candidatesFromCocoDetections(
 	frame: FrameSize,
 ): BarCandidate[] {
 	if (frame.width <= 0 || frame.height <= 0) return [];
-	const positives: PositiveDetection[] = [];
+	const candidates: BarCandidate[] = [];
 
 	for (const detection of detections) {
-		if (!Number.isFinite(detection.score) || detection.score < 0.18) continue;
+		if (!Number.isFinite(detection.score) || detection.score < 0.16) continue;
 		const label = normalizeLabel(detection.class);
 		const type = POSITIVE_LABELS.get(label);
 		if (!type) continue;
 		if (!fitsFrame(detection.bbox, frame)) continue;
 		if (!fitsTypeGeometry(type, detection.bbox, frame)) continue;
-		positives.push({
+		candidates.push({
 			type,
 			label,
-			score: detection.score,
+			confidence: detection.score,
 			bbox: detection.bbox,
+			support: 1,
 		});
 	}
 
-	const candidates = clusterPositives(positives)
-		.map((cluster) => clusterToCandidate(cluster, []))
-		.filter((candidate): candidate is BarCandidate => Boolean(candidate))
-		.sort((a, b) => b.confidence - a.confidence);
-
-	return suppressNearDuplicates(candidates).slice(0, 14);
+	return suppressNearDuplicates(
+		candidates.sort((a, b) => b.confidence - a.confidence),
+	).slice(0, 14);
 }
 
 function clusterPositives(detections: PositiveDetection[]) {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import {
 	type BarModelDetection,
+	candidatesFromCocoDetections,
 	candidatesFromOwlDetections,
 } from "../../../cameras/bar-service-detector";
 
@@ -71,6 +72,16 @@ describe("bar service OWLv2 post-processing", () => {
 			frame,
 		);
 		expect(candidates).toHaveLength(0);
+	});
+
+	it("accepts a single strong COCO cup as a bar candidate", () => {
+		const candidates = candidatesFromCocoDetections(
+			[{ class: "cup", score: 0.62, bbox: [120, 90, 90, 130] }],
+			frame,
+		);
+
+		expect(candidates).toHaveLength(1);
+		expect(candidates[0]?.type).toBe("glass");
 	});
 });
 

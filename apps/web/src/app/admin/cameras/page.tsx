@@ -150,6 +150,15 @@ export default function CamerasPage() {
 		useState<CountingDirection>("left_to_right");
 	const [barTracks, setBarTracks] = useState<BarTrack[]>([]);
 	const barTracksRef = useRef<BarTrack[]>([]);
+	const [barCandidates, setBarCandidates] = useState<
+		Array<{
+			type: BarItemType;
+			confidence: number;
+			bbox: BoundingBox;
+			label: string;
+		}>
+	>([]);
+	const barCandidatesRef = useRef<typeof barCandidates>([]);
 	const [barEvents, setBarEvents] = useState<BarExitEvent[]>([]);
 	const [barDetectionCount, setBarDetectionCount] = useState(0);
 	const [barRawDetectionCount, setBarRawDetectionCount] = useState(0);
@@ -397,9 +406,11 @@ export default function CamerasPage() {
 
 	const resetBarTracking = useCallback(() => {
 		barTracksRef.current = [];
+		barCandidatesRef.current = [];
 		lastBarModelAtRef.current = 0;
 		barSessionIdRef.current = createVisionSessionId();
 		setBarTracks([]);
+		setBarCandidates([]);
 		setBarDetectionCount(0);
 		setBarRawDetectionCount(0);
 		setBarInferenceMs(null);
@@ -497,6 +508,12 @@ export default function CamerasPage() {
 			canvas: HTMLCanvasElement,
 			people: DetectedObject[],
 			tracks: BarTrack[] = [],
+			candidates: Array<{
+				type: BarItemType;
+				confidence: number;
+				bbox: BoundingBox;
+				label: string;
+			}> = [],
 		) => {
 			const overlay = overlayCanvasRef.current;
 			if (!overlay) return;
@@ -551,6 +568,23 @@ export default function CamerasPage() {
 				);
 				context.lineWidth = Math.max(3, Math.round(canvas.width / 320));
 
+				for (const candidate of candidates) {
+					const [x, y, width, height] = candidate.bbox;
+					context.strokeStyle = "rgba(56, 189, 248, 0.72)";
+					context.fillStyle = "rgba(2, 6, 23, 0.74)";
+					context.setLineDash([6, 6]);
+					context.strokeRect(x, y, width, height);
+					context.setLineDash([]);
+					const label = `candidato ${itemLabel(candidate.type)} ${Math.round(
+						candidate.confidence * 100,
+					)}%`;
+					const labelWidth = context.measureText(label).width + 12;
+					const labelY = Math.max(0, y - 26);
+					context.fillRect(x, labelY, labelWidth, 24);
+					context.fillStyle = "#fff";
+					context.fillText(label, x + 6, labelY + 17);
+				}
+
 				for (const track of tracks.filter(isVisibleBarTrack)) {
 					const [x, y, width, height] = track.bbox;
 					context.strokeStyle = track.counted ? "#22c55e" : "#38bdf8";
@@ -593,7 +627,12 @@ export default function CamerasPage() {
 		async (canvas: HTMLCanvasElement) => {
 			if (!selected) return;
 			const now = Date.now();
-			drawDetections(canvas, [], barTracksRef.current);
+			drawDetections(
+				canvas,
+				[],
+				barTracksRef.current,
+				barCandidatesRef.current,
+			);
 			if (barModelStatus === "idle") {
 				void getBarModelDetector().catch(() => undefined);
 				return;
@@ -685,6 +724,8 @@ export default function CamerasPage() {
 							appearance: colorSignature(canvas, bbox),
 						};
 					});
+				barCandidatesRef.current = candidates;
+				setBarCandidates(candidates);
 				setBarRawDetectionCount(candidates.length);
 				const tracked = updateBarTracks(barTracksRef.current, candidates, {
 					now: Date.now(),
@@ -719,7 +760,7 @@ export default function CamerasPage() {
 						});
 					}
 				}
-				drawDetections(canvas, [], tracked.tracks);
+				drawDetections(canvas, [], tracked.tracks, candidates);
 				setBarInferenceMs(Math.round(performance.now() - inferenceStartedAt));
 				setDetection({
 					configured: true,
@@ -943,7 +984,10 @@ export default function CamerasPage() {
 		(alert) => alert.status === "open",
 	);
 	const savedExitEvents = data?.exitEvents ?? [];
-	const exitSummary = summarizeExitEvents([...barEvents, ...savedExitEvents]);
+	const sessionExitSummary = summarizeExitEvents(barEvents);
+	const savedExitSummary = summarizeExitEvents(savedExitEvents);
+	const savedExitCount = savedExitEvents.length;
+	const sessionExitCount = barEvents.length;
 	const confirmedBarTracks = barTracks.filter(isVisibleBarTrack);
 
 	useEffect(() => {
@@ -1082,7 +1126,7 @@ export default function CamerasPage() {
 					label={mode === "bar_exit" ? "Salidas hoy" : "Personas ahora"}
 					value={
 						mode === "bar_exit"
-							? savedExitEvents.length + barEvents.length
+							? savedExitCount + sessionExitCount
 							: stablePresence.personCount ||
 								selected?.lastPersonCount ||
 								detection?.personCount ||
@@ -1183,14 +1227,16 @@ export default function CamerasPage() {
 								<VideoOffIcon className="mr-2 h-4 w-4" />
 								Apagar
 							</Button>
-							<Button
-								variant="outline"
-								onClick={detectOnce}
-								disabled={!running || busy}
-							>
-								<RefreshCwIcon className="mr-2 h-4 w-4" />
-								Analizar ahora
-							</Button>
+							{mode !== "bar_exit" ? (
+								<Button
+									variant="outline"
+									onClick={detectOnce}
+									disabled={!running || busy}
+								>
+									<RefreshCwIcon className="mr-2 h-4 w-4" />
+									Analizar ahora
+								</Button>
+							) : null}
 						</div>
 						{mode === "bar_exit" ? (
 							<BarExitPanel
@@ -1204,7 +1250,10 @@ export default function CamerasPage() {
 								modelStatus={barModelStatus}
 								modelRuntime={barModelRuntime}
 								inferenceMs={barInferenceMs}
-								exitSummary={exitSummary}
+								sessionExitSummary={sessionExitSummary}
+								savedExitSummary={savedExitSummary}
+								sessionExitCount={sessionExitCount}
+								savedExitCount={savedExitCount}
 								onCenterGate={() =>
 									setCountingLine(
 										placeCountingGate(countingDirection, {
@@ -1582,7 +1631,10 @@ function BarExitPanel({
 	modelStatus,
 	modelRuntime,
 	inferenceMs,
-	exitSummary,
+	sessionExitSummary,
+	savedExitSummary,
+	sessionExitCount,
+	savedExitCount,
 	onCenterGate,
 	onReset,
 }: {
@@ -1598,7 +1650,10 @@ function BarExitPanel({
 	modelStatus: BarModelStatus;
 	modelRuntime: BarModelRuntime | null;
 	inferenceMs: number | null;
-	exitSummary: Record<BarItemType, number>;
+	sessionExitSummary: Record<BarItemType, number>;
+	savedExitSummary: Record<BarItemType, number>;
+	sessionExitCount: number;
+	savedExitCount: number;
 	onCenterGate: () => void;
 	onReset: () => void;
 }) {
@@ -1628,7 +1683,7 @@ function BarExitPanel({
 					<div>
 						<div className="font-semibold">
 							{ready
-								? modelRuntime === "wasm"
+								? modelRuntime === "wasm" || modelRuntime === "coco"
 									? "Conteo listo (compatible)"
 									: "Conteo listo"
 								: barModelStatusLabel(modelStatus, 0, modelRuntime)}
@@ -1709,10 +1764,20 @@ function BarExitPanel({
 						label="seguimientos activos"
 						value={barTracks.filter((track) => track.misses === 0).length}
 					/>
-					<SmallStat label="platos" value={exitSummary.plate} />
-					<SmallStat label="vasos/copas" value={exitSummary.glass} />
-					<SmallStat label="botellas" value={exitSummary.bottle} />
-					<SmallStat label="latas" value={exitSummary.can} />
+					<SmallStat label="cruces sesion" value={sessionExitCount} />
+					<SmallStat label="guardados hoy" value={savedExitCount} />
+					<SmallStat label="platos sesion" value={sessionExitSummary.plate} />
+					<SmallStat
+						label="vasos/copas sesion"
+						value={sessionExitSummary.glass}
+					/>
+					<SmallStat
+						label="botellas sesion"
+						value={sessionExitSummary.bottle}
+					/>
+					<SmallStat label="latas sesion" value={sessionExitSummary.can} />
+					<SmallStat label="platos hoy" value={savedExitSummary.plate} />
+					<SmallStat label="vasos hoy" value={savedExitSummary.glass} />
 					<Button
 						type="button"
 						variant="outline"
