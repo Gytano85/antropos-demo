@@ -156,6 +156,7 @@ export default function CamerasPage() {
 			confidence: number;
 			bbox: BoundingBox;
 			label: string;
+			seenAt?: number;
 		}>
 	>([]);
 	const barCandidatesRef = useRef<typeof barCandidates>([]);
@@ -722,10 +723,17 @@ export default function CamerasPage() {
 							...candidate,
 							bbox,
 							appearance: colorSignature(canvas, bbox),
+							seenAt: Date.now(),
 						};
 					});
-				barCandidatesRef.current = candidates;
-				setBarCandidates(candidates);
+				const visibleCandidates =
+					candidates.length > 0
+						? candidates
+						: barCandidatesRef.current.filter(
+								(candidate) => Date.now() - (candidate.seenAt ?? 0) <= 1_800,
+							);
+				barCandidatesRef.current = visibleCandidates;
+				setBarCandidates(visibleCandidates);
 				setBarRawDetectionCount(candidates.length);
 				const tracked = updateBarTracks(barTracksRef.current, candidates, {
 					now: Date.now(),
@@ -733,10 +741,10 @@ export default function CamerasPage() {
 					direction: countingDirection,
 					frameWidth: canvas.width,
 					frameHeight: canvas.height,
-					minHits: 3,
-					minConfirmMs: 450,
-					maxMisses: 4,
-					maxLostMs: 2_400,
+					minHits: 2,
+					minConfirmMs: 300,
+					maxMisses: 10,
+					maxLostMs: 4_500,
 					lineTolerance: Math.max(7, canvas.width * 0.009),
 					minTravelDistance: Math.max(24, canvas.width * 0.035),
 					gatePadding: Math.max(12, canvas.width * 0.025),
@@ -760,7 +768,7 @@ export default function CamerasPage() {
 						});
 					}
 				}
-				drawDetections(canvas, [], tracked.tracks, candidates);
+				drawDetections(canvas, [], tracked.tracks, visibleCandidates);
 				setBarInferenceMs(Math.round(performance.now() - inferenceStartedAt));
 				setDetection({
 					configured: true,
@@ -1011,14 +1019,14 @@ export default function CamerasPage() {
 		(event: React.PointerEvent<HTMLCanvasElement>) => {
 			if (mode !== "bar_exit") return;
 			const rect = event.currentTarget.getBoundingClientRect();
-			setCountingLine(
-				placeCountingGate(countingDirection, {
+			setCountingLine((current) =>
+				moveLineToPoint(current, {
 					x: (event.clientX - rect.left) / Math.max(1, rect.width),
 					y: (event.clientY - rect.top) / Math.max(1, rect.height),
 				}),
 			);
 		},
-		[countingDirection, mode],
+		[mode],
 	);
 
 	const handleOverlayPointerDown = useCallback(
@@ -1255,8 +1263,8 @@ export default function CamerasPage() {
 								sessionExitCount={sessionExitCount}
 								savedExitCount={savedExitCount}
 								onCenterGate={() =>
-									setCountingLine(
-										placeCountingGate(countingDirection, {
+									setCountingLine((current) =>
+										moveLineToPoint(current, {
 											x: 0.5,
 											y: 0.5,
 										}),
@@ -2129,7 +2137,7 @@ function isReliablePersonPrediction(
 }
 
 function isVisibleBarTrack(track: BarTrack) {
-	return track.state === "confirmed" && track.misses <= 2;
+	return track.state === "confirmed" && track.misses <= 8;
 }
 
 function lineToCanvas(
@@ -2147,6 +2155,24 @@ function lineToCanvas(
 			y: normalized.end.y * canvas.height,
 		},
 	};
+}
+
+function moveLineToPoint(line: CountingLine, point: { x: number; y: number }) {
+	const normalized = normalizeLine(line);
+	const dx = normalized.end.x - normalized.start.x;
+	const dy = normalized.end.y - normalized.start.y;
+	const halfX = dx / 2;
+	const halfY = dy / 2;
+	const maxOffsetX = Math.max(Math.abs(halfX), 0.001);
+	const maxOffsetY = Math.max(Math.abs(halfY), 0.001);
+	const center = {
+		x: Math.max(maxOffsetX, Math.min(1 - maxOffsetX, point.x)),
+		y: Math.max(maxOffsetY, Math.min(1 - maxOffsetY, point.y)),
+	};
+	return normalizeLine({
+		start: { x: center.x - halfX, y: center.y - halfY },
+		end: { x: center.x + halfX, y: center.y + halfY },
+	});
 }
 
 function regionToPixels(
