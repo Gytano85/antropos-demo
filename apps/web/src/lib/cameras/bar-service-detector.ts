@@ -46,6 +46,12 @@ export type FrameSize = {
 	height: number;
 };
 
+export type CocoModelDetection = {
+	class: string;
+	score: number;
+	bbox: BoundingBox;
+};
+
 type PositiveDetection = {
 	type: BarItemType;
 	label: string;
@@ -64,12 +70,16 @@ const POSITIVE_LABELS = new Map<string, BarItemType>([
 	["a dinner plate", "plate"],
 	["a bowl with food", "plate"],
 	["a serving tray with food", "plate"],
+	["bowl", "plate"],
 	["a drinking glass", "glass"],
 	["a wine glass", "glass"],
 	["a cup with a drink", "glass"],
+	["cup", "glass"],
+	["wine glass", "glass"],
 	["a beverage bottle", "bottle"],
 	["a beer bottle", "bottle"],
 	["a water bottle", "bottle"],
+	["bottle", "bottle"],
 	["a beverage can", "can"],
 	["a beer can", "can"],
 	["a soda can", "can"],
@@ -116,6 +126,36 @@ export function candidatesFromOwlDetections(
 
 	const candidates = clusterPositives(positives)
 		.map((cluster) => clusterToCandidate(cluster, negatives))
+		.filter((candidate): candidate is BarCandidate => Boolean(candidate))
+		.sort((a, b) => b.confidence - a.confidence);
+
+	return suppressNearDuplicates(candidates).slice(0, 14);
+}
+
+export function candidatesFromCocoDetections(
+	detections: CocoModelDetection[],
+	frame: FrameSize,
+): BarCandidate[] {
+	if (frame.width <= 0 || frame.height <= 0) return [];
+	const positives: PositiveDetection[] = [];
+
+	for (const detection of detections) {
+		if (!Number.isFinite(detection.score) || detection.score < 0.18) continue;
+		const label = normalizeLabel(detection.class);
+		const type = POSITIVE_LABELS.get(label);
+		if (!type) continue;
+		if (!fitsFrame(detection.bbox, frame)) continue;
+		if (!fitsTypeGeometry(type, detection.bbox, frame)) continue;
+		positives.push({
+			type,
+			label,
+			score: detection.score,
+			bbox: detection.bbox,
+		});
+	}
+
+	const candidates = clusterPositives(positives)
+		.map((cluster) => clusterToCandidate(cluster, []))
 		.filter((candidate): candidate is BarCandidate => Boolean(candidate))
 		.sort((a, b) => b.confidence - a.confidence);
 

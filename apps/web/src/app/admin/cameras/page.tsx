@@ -45,6 +45,7 @@ import {
 	BAR_MODEL_ID,
 	BAR_MODEL_LABELS,
 	type BarModelDetection,
+	candidatesFromCocoDetections,
 	candidatesFromOwlDetections,
 } from "@/lib/cameras/bar-service-detector";
 import {
@@ -86,7 +87,7 @@ type DetectionResult = {
 
 type CameraMode = "presence" | "bar_exit";
 type BarModelStatus = "idle" | "loading" | "ready" | "unsupported" | "error";
-type BarModelRuntime = "webgpu" | "wasm";
+type BarModelRuntime = "webgpu" | "wasm" | "coco";
 type BarModelDetector = (
 	image: string,
 	candidateLabels: string[],
@@ -326,48 +327,63 @@ export default function CamerasPage() {
 		return objectDetectorPromiseRef.current;
 	}, []);
 
-	const getBarModelDetector = useCallback(async (forceCompatible = false) => {
-		if (forceCompatible) {
-			barModelDetectorRef.current = null;
-			barModelDetectorPromiseRef.current = null;
-			barModelRuntimeRef.current = null;
-			setBarModelRuntime(null);
-		}
-		if (barModelDetectorRef.current) return barModelDetectorRef.current;
-		if (!barModelDetectorPromiseRef.current) {
-			const gpuAvailable = Boolean(
-				(navigator as Navigator & { gpu?: unknown }).gpu,
-			);
-			setBarModelStatus("loading");
-			setBarModelProgress(0);
-			barModelDetectorPromiseRef.current = (async () => {
-				const moduleUrl = TRANSFORMERS_CDN_URL;
-				const { pipeline } = (await import(
-					/* webpackIgnore: true */ moduleUrl
-				)) as {
-					pipeline: TransformersPipeline;
-				};
-				const { detector, runtime } = await loadBarModelWithFallback({
-					pipeline,
-					gpuAvailable: gpuAvailable && !forceCompatible,
-					onProgress: setBarModelProgress,
-				});
-				barModelDetectorRef.current = detector;
-				barModelRuntimeRef.current = runtime;
-				setBarModelRuntime(runtime);
-				setBarModelProgress(100);
-				setBarModelStatus("ready");
-				return detector;
-			})().catch((error) => {
+	const getBarFallbackDetector = useCallback(async () => {
+		const detector = await getObjectDetector();
+		barModelDetectorRef.current = null;
+		barModelDetectorPromiseRef.current = null;
+		barModelRuntimeRef.current = "coco";
+		setBarModelRuntime("coco");
+		setBarModelProgress(100);
+		setBarModelStatus("ready");
+		return detector;
+	}, [getObjectDetector]);
+
+	const getBarModelDetector = useCallback(
+		async (forceCompatible = false) => {
+			if (forceCompatible) {
+				barModelDetectorRef.current = null;
 				barModelDetectorPromiseRef.current = null;
 				barModelRuntimeRef.current = null;
 				setBarModelRuntime(null);
-				setBarModelStatus("error");
-				throw error;
-			});
-		}
-		return barModelDetectorPromiseRef.current;
-	}, []);
+			}
+			if (barModelDetectorRef.current) return barModelDetectorRef.current;
+			if (!barModelDetectorPromiseRef.current) {
+				const gpuAvailable = Boolean(
+					(navigator as Navigator & { gpu?: unknown }).gpu,
+				);
+				setBarModelStatus("loading");
+				setBarModelProgress(0);
+				barModelDetectorPromiseRef.current = (async () => {
+					const moduleUrl = TRANSFORMERS_CDN_URL;
+					const { pipeline } = (await import(
+						/* webpackIgnore: true */ moduleUrl
+					)) as {
+						pipeline: TransformersPipeline;
+					};
+					const { detector, runtime } = await loadBarModelWithFallback({
+						pipeline,
+						gpuAvailable: gpuAvailable && !forceCompatible,
+						onProgress: setBarModelProgress,
+					});
+					barModelDetectorRef.current = detector;
+					barModelRuntimeRef.current = runtime;
+					setBarModelRuntime(runtime);
+					setBarModelProgress(100);
+					setBarModelStatus("ready");
+					return detector;
+				})().catch(async () => {
+					barModelDetectorPromiseRef.current = null;
+					barModelRuntimeRef.current = null;
+					setBarModelRuntime(null);
+					await getBarFallbackDetector();
+					const fallbackDetector: BarModelDetector = async () => [];
+					return fallbackDetector;
+				});
+			}
+			return barModelDetectorPromiseRef.current;
+		},
+		[getBarFallbackDetector],
+	);
 
 	const stopCamera = useCallback(() => {
 		for (const track of streamRef.current?.getTracks() ?? []) {
@@ -584,7 +600,8 @@ export default function CamerasPage() {
 			}
 			if (
 				barModelStatus !== "ready" ||
-				!barModelDetectorRef.current ||
+				(barModelRuntimeRef.current !== "coco" &&
+					!barModelDetectorRef.current) ||
 				barModelBusyRef.current ||
 				now - lastBarModelAtRef.current < 500
 			) {
@@ -619,37 +636,41 @@ export default function CamerasPage() {
 					modelCanvas.width,
 					modelCanvas.height,
 				);
-				const modelInput = modelCanvas.toDataURL("image/jpeg", 0.92);
-				let predictions: BarModelDetection[];
-				try {
-					predictions = await barModelDetectorRef.current(
-						modelInput,
-						[...BAR_MODEL_LABELS],
-						{ threshold: 0.07, top_k: 80 },
-					);
-				} catch (error) {
-					if (barModelRuntimeRef.current !== "webgpu") throw error;
-					barModelDetectorRef.current = null;
-					barModelDetectorPromiseRef.current = null;
-					barModelRuntimeRef.current = null;
-					setBarModelRuntime(null);
-					setBarModelStatus("loading");
-					const compatibleDetector = await getBarModelDetector(true);
-					predictions = await compatibleDetector(
-						modelInput,
-						[...BAR_MODEL_LABELS],
-						{
-							threshold: 0.07,
-							top_k: 80,
-						},
-					);
-				}
 				const scaleX = crop.width / modelCanvas.width;
 				const scaleY = crop.height / modelCanvas.height;
-				const candidates = candidatesFromOwlDetections(predictions, {
-					width: modelCanvas.width,
-					height: modelCanvas.height,
-				})
+				const baseCandidates =
+					barModelRuntimeRef.current === "coco"
+						? candidatesFromCocoDetections(
+								(await getObjectDetector().then((detector) =>
+									detector.detect(modelCanvas),
+								)) as Array<{
+									class: string;
+									score: number;
+									bbox: BoundingBox;
+								}>,
+								{
+									width: modelCanvas.width,
+									height: modelCanvas.height,
+								},
+							)
+						: candidatesFromOwlDetections(
+								await runOwlBarDetector({
+									detector: barModelDetectorRef.current,
+									modelCanvas,
+									getBarModelDetector,
+									getBarFallbackDetector,
+									setBarModelRuntime,
+									setBarModelStatus,
+									runtimeRef: barModelRuntimeRef,
+									detectorRef: barModelDetectorRef,
+									detectorPromiseRef: barModelDetectorPromiseRef,
+								}),
+								{
+									width: modelCanvas.width,
+									height: modelCanvas.height,
+								},
+							);
+				const candidates = baseCandidates
 					.filter((candidate) => enabledBarItems[candidate.type])
 					.map((candidate) => {
 						const bbox: BoundingBox = [
@@ -724,7 +745,9 @@ export default function CamerasPage() {
 			drawDetections,
 			draft.location,
 			enabledBarItems,
+			getBarFallbackDetector,
 			getBarModelDetector,
+			getObjectDetector,
 			mutateBarExit,
 			selected,
 		],
@@ -1859,8 +1882,8 @@ function BarEngineStatus({
 					<div className="font-medium">El detector no está disponible</div>
 					<div>
 						{modelStatus === "unsupported"
-							? "Abre esta página en Chrome o Edge actualizado con WebGPU."
-							: "OWLv2 no pudo completar la inferencia. Recarga la página para volver a descargar el modelo."}
+							? "El navegador no permite ejecutar el modelo local."
+							: "El detector principal fallo; el sistema intentara usar el modo compatible."}
 					</div>
 				</div>
 			</div>
@@ -1894,7 +1917,7 @@ function BarEngineStatus({
 		<div className="flex flex-col gap-2 rounded-xl border border-emerald-300/50 bg-emerald-50 p-3 text-emerald-950 text-sm sm:flex-row sm:items-center sm:justify-between dark:bg-emerald-950/25 dark:text-emerald-100">
 			<div className="flex items-center gap-2 font-medium">
 				<CheckCircle2Icon className="h-4 w-4" />
-				{modelRuntime === "wasm"
+				{modelRuntime === "wasm" || modelRuntime === "coco"
 					? "Detector activo en modo compatible"
 					: "Detector activo"}
 			</div>
@@ -2195,13 +2218,67 @@ async function loadBarModelWithFallback({
 	throw new Error(errors.join(" | "));
 }
 
+async function runOwlBarDetector({
+	detector,
+	modelCanvas,
+	getBarModelDetector,
+	getBarFallbackDetector,
+	setBarModelRuntime,
+	setBarModelStatus,
+	runtimeRef,
+	detectorRef,
+	detectorPromiseRef,
+}: {
+	detector: BarModelDetector | null;
+	modelCanvas: HTMLCanvasElement;
+	getBarModelDetector: (forceCompatible?: boolean) => Promise<BarModelDetector>;
+	getBarFallbackDetector: () => Promise<ObjectDetection>;
+	setBarModelRuntime: (runtime: BarModelRuntime | null) => void;
+	setBarModelStatus: (status: BarModelStatus) => void;
+	runtimeRef: React.MutableRefObject<BarModelRuntime | null>;
+	detectorRef: React.MutableRefObject<BarModelDetector | null>;
+	detectorPromiseRef: React.MutableRefObject<Promise<BarModelDetector> | null>;
+}): Promise<BarModelDetection[]> {
+	if (!detector) {
+		await getBarFallbackDetector();
+		return [];
+	}
+	const modelInput = modelCanvas.toDataURL("image/jpeg", 0.92);
+	try {
+		return await detector(modelInput, [...BAR_MODEL_LABELS], {
+			threshold: 0.07,
+			top_k: 80,
+		});
+	} catch {
+		if (runtimeRef.current === "webgpu") {
+			detectorRef.current = null;
+			detectorPromiseRef.current = null;
+			runtimeRef.current = null;
+			setBarModelRuntime(null);
+			setBarModelStatus("loading");
+			try {
+				const compatibleDetector = await getBarModelDetector(true);
+				return await compatibleDetector(modelInput, [...BAR_MODEL_LABELS], {
+					threshold: 0.07,
+					top_k: 80,
+				});
+			} catch {
+				await getBarFallbackDetector();
+				return [];
+			}
+		}
+		await getBarFallbackDetector();
+		return [];
+	}
+}
+
 function barModelStatusLabel(
 	status: BarModelStatus,
 	progress: number,
 	runtime?: BarModelRuntime | null,
 ) {
 	if (status === "ready")
-		return runtime === "wasm"
+		return runtime === "wasm" || runtime === "coco"
 			? "Detector listo (compatible)"
 			: "Detector listo";
 	if (status === "loading") return `Preparando detector ${progress}%`;
