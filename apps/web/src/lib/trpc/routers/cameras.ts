@@ -216,7 +216,6 @@ export const camerasRouter = router({
 				status: event.status,
 				createdAt: event.created_at?.toISOString() ?? null,
 			})),
-			inferenceConfigured: Boolean(process.env.ROBOFLOW_API_KEY),
 		};
 	}),
 

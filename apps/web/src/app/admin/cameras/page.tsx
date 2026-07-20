@@ -42,31 +42,25 @@ import type React from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
+	BAR_MODEL_ID,
+	BAR_MODEL_LABELS,
+	type BarModelDetection,
+	candidatesFromOwlDetections,
+} from "@/lib/cameras/bar-service-detector";
+import {
 	type BarExitEvent,
 	type BarItemType,
+	type BarTrack,
+	type BoundingBox,
 	type CountingDirection,
 	type CountingLine,
 	defaultCountingLine,
 	itemLabel,
 	normalizeLine,
-	type ObjectCandidate,
-	type ObjectTrack,
 	placeCountingGate,
-	updateObjectTracks,
-} from "@/lib/cameras/bar-exit-engine";
-import {
-	AdaptiveMotionDetector,
-	type MotionAnalysis,
-	type MotionCalibrationState,
-	type NormalizedRegion,
-	regionAroundLine,
-} from "@/lib/cameras/bar-motion-engine";
-import {
-	BAR_SEMANTIC_PROMPT,
-	fuseSemanticWithMotion,
-	type GroundedDetection,
-	semanticCandidatesFromDetections,
-} from "@/lib/cameras/bar-semantic-engine";
+	trackingRegion,
+	updateBarTracks,
+} from "@/lib/cameras/bar-service-tracker";
 import {
 	evaluatePresenceWindow,
 	type PresenceSample,
@@ -91,12 +85,12 @@ type DetectionResult = {
 };
 
 type CameraMode = "presence" | "bar_exit";
-type BarSemanticStatus = "idle" | "loading" | "ready" | "unsupported" | "error";
-type BarSemanticDetector = (
+type BarModelStatus = "idle" | "loading" | "ready" | "unsupported" | "error";
+type BarModelDetector = (
 	image: string,
 	candidateLabels: string[],
 	options: { threshold: number; top_k: number },
-) => Promise<GroundedDetection[]>;
+) => Promise<BarModelDetection[]>;
 const TRANSFORMERS_CDN_URL =
 	"https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.2.0";
 
@@ -107,13 +101,13 @@ export default function CamerasPage() {
 	const ipImageRef = useRef<HTMLImageElement | null>(null);
 	const canvasRef = useRef<HTMLCanvasElement | null>(null);
 	const overlayCanvasRef = useRef<HTMLCanvasElement | null>(null);
-	const motionCanvasRef = useRef<HTMLCanvasElement | null>(null);
 	const barModelCanvasRef = useRef<HTMLCanvasElement | null>(null);
 	const barModelBusyRef = useRef(false);
-	const barSemanticDetectorRef = useRef<BarSemanticDetector | null>(null);
-	const barSemanticDetectorPromiseRef =
-		useRef<Promise<BarSemanticDetector> | null>(null);
-	const barMotionDetectorRef = useRef(new AdaptiveMotionDetector());
+	const barModelDetectorRef = useRef<BarModelDetector | null>(null);
+	const barModelDetectorPromiseRef = useRef<Promise<BarModelDetector> | null>(
+		null,
+	);
+	const gateDraggingRef = useRef(false);
 	const streamRef = useRef<MediaStream | null>(null);
 	const busyRef = useRef(false);
 	const [selectedId, setSelectedId] = useState<number | null>(null);
@@ -146,29 +140,17 @@ export default function CamerasPage() {
 	);
 	const [countingDirection, setCountingDirection] =
 		useState<CountingDirection>("left_to_right");
-	const [barTracks, setBarTracks] = useState<ObjectTrack[]>([]);
-	const barTracksRef = useRef<ObjectTrack[]>([]);
+	const [barTracks, setBarTracks] = useState<BarTrack[]>([]);
+	const barTracksRef = useRef<BarTrack[]>([]);
 	const [barEvents, setBarEvents] = useState<BarExitEvent[]>([]);
 	const [barDetectionCount, setBarDetectionCount] = useState(0);
-	const [barMotionState, setBarMotionState] = useState<{
-		state: MotionCalibrationState;
-		progress: number;
-		foregroundRatio: number;
-		noiseLevel: number;
-	}>({
-		state: "uncalibrated",
-		progress: 0,
-		foregroundRatio: 0,
-		noiseLevel: 0,
-	});
-	const [barSemanticStatus, setBarSemanticStatus] =
-		useState<BarSemanticStatus>("idle");
-	const [barSemanticProgress, setBarSemanticProgress] = useState(0);
+	const [barRawDetectionCount, setBarRawDetectionCount] = useState(0);
+	const [barInferenceMs, setBarInferenceMs] = useState<number | null>(null);
+	const [barModelStatus, setBarModelStatus] = useState<BarModelStatus>("idle");
+	const [barModelProgress, setBarModelProgress] = useState(0);
 	const lastBarModelAtRef = useRef(0);
-	const lastBarModelResultAtRef = useRef(0);
 	const barSessionIdRef = useRef(createVisionSessionId());
 	const loadedBarConfigForRef = useRef<number | null>(null);
-	const lastModelCandidatesRef = useRef<ObjectCandidate[]>([]);
 	const [enabledBarItems, setEnabledBarItems] = useState<
 		Record<BarItemType, boolean>
 	>({
@@ -335,21 +317,21 @@ export default function CamerasPage() {
 		return objectDetectorPromiseRef.current;
 	}, []);
 
-	const getBarSemanticDetector = useCallback(async () => {
-		if (barSemanticDetectorRef.current) return barSemanticDetectorRef.current;
-		if (!barSemanticDetectorPromiseRef.current) {
+	const getBarModelDetector = useCallback(async () => {
+		if (barModelDetectorRef.current) return barModelDetectorRef.current;
+		if (!barModelDetectorPromiseRef.current) {
 			const gpuAvailable = Boolean(
 				(navigator as Navigator & { gpu?: unknown }).gpu,
 			);
 			if (!gpuAvailable) {
-				setBarSemanticStatus("unsupported");
+				setBarModelStatus("unsupported");
 				throw new Error(
-					"Este navegador no ofrece WebGPU; el conteo visual se desactiva para no inventar platos.",
+					"Este navegador no ofrece WebGPU. Usa Chrome o Edge actualizado para ejecutar OWLv2.",
 				);
 			}
-			setBarSemanticStatus("loading");
-			setBarSemanticProgress(0);
-			barSemanticDetectorPromiseRef.current = (async () => {
+			setBarModelStatus("loading");
+			setBarModelProgress(0);
+			barModelDetectorPromiseRef.current = (async () => {
 				const moduleUrl = TRANSFORMERS_CDN_URL;
 				const { pipeline } = (await import(
 					/* webpackIgnore: true */ moduleUrl
@@ -362,28 +344,28 @@ export default function CamerasPage() {
 				};
 				const loaded = await pipeline(
 					"zero-shot-object-detection",
-					"onnx-community/grounding-dino-tiny-ONNX",
+					BAR_MODEL_ID,
 					{
 						device: "webgpu",
 						dtype: "q4f16",
 						progress_callback: (event: unknown) => {
 							const progress = modelFileProgress(event);
-							if (progress !== null) setBarSemanticProgress(progress);
+							if (progress !== null) setBarModelProgress(progress);
 						},
 					},
 				);
-				const detector = loaded as unknown as BarSemanticDetector;
-				barSemanticDetectorRef.current = detector;
-				setBarSemanticProgress(100);
-				setBarSemanticStatus("ready");
+				const detector = loaded as unknown as BarModelDetector;
+				barModelDetectorRef.current = detector;
+				setBarModelProgress(100);
+				setBarModelStatus("ready");
 				return detector;
 			})().catch((error) => {
-				barSemanticDetectorPromiseRef.current = null;
-				setBarSemanticStatus("error");
+				barModelDetectorPromiseRef.current = null;
+				setBarModelStatus("error");
 				throw error;
 			});
 		}
-		return barSemanticDetectorPromiseRef.current;
+		return barModelDetectorPromiseRef.current;
 	}, []);
 
 	const stopCamera = useCallback(() => {
@@ -393,45 +375,28 @@ export default function CamerasPage() {
 		const overlay = overlayCanvasRef.current;
 		overlay?.getContext("2d")?.clearRect(0, 0, overlay.width, overlay.height);
 		streamRef.current = null;
-		barMotionDetectorRef.current.beginCalibration();
-		setBarMotionState({
-			state: "uncalibrated",
-			progress: 0,
-			foregroundRatio: 0,
-			noiseLevel: 0,
-		});
 		setRunning(false);
 	}, []);
 
-	const beginBarCalibration = useCallback(() => {
-		barMotionDetectorRef.current.beginCalibration();
+	const resetBarTracking = useCallback(() => {
 		barTracksRef.current = [];
-		lastModelCandidatesRef.current = [];
 		lastBarModelAtRef.current = 0;
-		lastBarModelResultAtRef.current = 0;
 		barSessionIdRef.current = createVisionSessionId();
 		setBarTracks([]);
 		setBarDetectionCount(0);
-		setBarMotionState({
-			state: "calibrating",
-			progress: 0,
-			foregroundRatio: 0,
-			noiseLevel: 0,
-		});
-		toast.info("Deja libre la zona de paso durante dos segundos.");
+		setBarRawDetectionCount(0);
+		setBarInferenceMs(null);
 	}, []);
 
 	const startCamera = async () => {
 		if (!selected || startingCamera) return;
 		const prepareDetector = () => {
 			const promise =
-				mode === "bar_exit" ? getBarSemanticDetector() : getObjectDetector();
+				mode === "bar_exit" ? getBarModelDetector() : getObjectDetector();
 			void promise.catch((error) => {
 				if (mode === "bar_exit") {
 					setCameraError(
-						error instanceof Error
-							? error.message
-							: "No se pudo cargar el verificador visual.",
+						error instanceof Error ? error.message : "No se pudo cargar OWLv2.",
 					);
 				}
 			});
@@ -514,7 +479,7 @@ export default function CamerasPage() {
 		(
 			canvas: HTMLCanvasElement,
 			people: DetectedObject[],
-			tracks: ObjectTrack[] = [],
+			tracks: BarTrack[] = [],
 		) => {
 			const overlay = overlayCanvasRef.current;
 			if (!overlay) return;
@@ -528,7 +493,7 @@ export default function CamerasPage() {
 			context.font = `${Math.max(16, Math.round(canvas.width / 55))}px sans-serif`;
 			if (mode === "bar_exit") {
 				const line = lineToCanvas(countingLine, canvas);
-				const region = regionAroundLine(countingLine, countingDirection);
+				const region = trackingRegion(countingLine, countingDirection);
 				context.fillStyle = "rgba(56, 189, 248, 0.08)";
 				context.strokeStyle = "rgba(56, 189, 248, 0.75)";
 				context.setLineDash([8, 8]);
@@ -569,9 +534,7 @@ export default function CamerasPage() {
 				);
 				context.lineWidth = Math.max(3, Math.round(canvas.width / 320));
 
-				for (const track of tracks.filter((item) =>
-					isConfirmedBarTrack(item, canvas.width),
-				)) {
+				for (const track of tracks.filter(isVisibleBarTrack)) {
 					const [x, y, width, height] = track.bbox;
 					context.strokeStyle = track.counted ? "#22c55e" : "#38bdf8";
 					context.fillStyle = "rgba(0,0,0,0.72)";
@@ -582,13 +545,9 @@ export default function CamerasPage() {
 						context.lineTo(track.center.x, track.center.y);
 						context.stroke();
 					}
-					const objectLabel =
-						track.label === "motion-served-object"
-							? "Objeto validado"
-							: itemLabel(track.type);
-					const label = `${objectLabel} ${track.id.replace("_", " #")} ${
-						track.counted ? "contado" : ""
-					}`;
+					const label = `${itemLabel(track.type)} ${Math.round(
+						track.confidence * 100,
+					)}%${track.counted ? " · contado" : ""}`;
 					const labelWidth = context.measureText(label).width + 12;
 					const labelY = Math.max(0, y - 26);
 					context.fillRect(x, labelY, labelWidth, 24);
@@ -617,159 +576,134 @@ export default function CamerasPage() {
 		async (canvas: HTMLCanvasElement) => {
 			if (!selected) return;
 			const now = Date.now();
-			const motionResult = analyzeMovingServedObjects(
-				canvas,
-				motionCanvasRef,
-				barMotionDetectorRef.current,
-				regionAroundLine(countingLine, countingDirection),
-			);
-			setBarMotionState({
-				state: motionResult.state,
-				progress: motionResult.progress,
-				foregroundRatio: motionResult.foregroundRatio,
-				noiseLevel: motionResult.noiseLevel,
-			});
-
-			if (motionResult.state !== "ready") {
-				setBarDetectionCount(0);
-				drawDetections(canvas, [], barTracksRef.current);
-				setDetection({
-					configured: true,
-					personCount: 0,
-					confidenceAvg: null,
-					message:
-						motionResult.state === "unstable"
-							? "La vista cambió demasiado. Recalibra con la zona vacía."
-							: "Calibrando la zona de paso.",
-				});
+			drawDetections(canvas, [], barTracksRef.current);
+			if (barModelStatus === "idle") {
+				void getBarModelDetector().catch(() => undefined);
+				return;
+			}
+			if (
+				barModelStatus !== "ready" ||
+				!barModelDetectorRef.current ||
+				barModelBusyRef.current ||
+				now - lastBarModelAtRef.current < 500
+			) {
 				return;
 			}
 
-			if (
-				barSemanticDetectorRef.current &&
-				barSemanticStatus === "ready" &&
-				!barModelBusyRef.current &&
-				now - lastBarModelAtRef.current > 600
-			) {
-				lastBarModelAtRef.current = now;
+			barModelBusyRef.current = true;
+			lastBarModelAtRef.current = now;
+			const inferenceStartedAt = performance.now();
+			try {
 				if (!barModelCanvasRef.current) {
 					barModelCanvasRef.current = document.createElement("canvas");
 				}
 				const modelCanvas = barModelCanvasRef.current;
-				modelCanvas.width = Math.min(640, canvas.width);
+				const region = trackingRegion(countingLine, countingDirection);
+				const crop = regionToPixels(region, canvas.width, canvas.height);
+				modelCanvas.width = Math.max(320, Math.min(800, crop.width));
 				modelCanvas.height = Math.max(
-					180,
-					Math.round((canvas.height / canvas.width) * modelCanvas.width),
+					240,
+					Math.round((crop.height / crop.width) * modelCanvas.width),
 				);
-				modelCanvas
-					.getContext("2d")
-					?.drawImage(canvas, 0, 0, modelCanvas.width, modelCanvas.height);
-				const scaleX = canvas.width / modelCanvas.width;
-				const scaleY = canvas.height / modelCanvas.height;
-				const imageDataUrl = modelCanvas.toDataURL("image/jpeg", 0.84);
-				barModelBusyRef.current = true;
-				void barSemanticDetectorRef
-					.current(imageDataUrl, [BAR_SEMANTIC_PROMPT], {
-						threshold: 0.18,
-						top_k: 20,
-					})
-					.then((predictions) => {
-						lastModelCandidatesRef.current = semanticCandidatesFromDetections(
-							predictions,
-							{
-								width: modelCanvas.width,
-								height: modelCanvas.height,
-							},
-						)
-							.map((candidate) => ({
-								...candidate,
-								bbox: [
-									candidate.bbox[0] * scaleX,
-									candidate.bbox[1] * scaleY,
-									candidate.bbox[2] * scaleX,
-									candidate.bbox[3] * scaleY,
-								] as [number, number, number, number],
-							}))
-							.filter((candidate) => enabledBarItems[candidate.type]);
-						lastBarModelResultAtRef.current = Date.now();
-					})
-					.catch((error) => {
-						lastModelCandidatesRef.current = [];
-						setBarSemanticStatus("error");
-						setCameraError(
-							error instanceof Error
-								? `Falló la verificación visual: ${error.message}`
-								: "Falló la verificación visual.",
-						);
-					})
-					.finally(() => {
-						barModelBusyRef.current = false;
+				const modelContext = modelCanvas.getContext("2d");
+				if (!modelContext) return;
+				modelContext.drawImage(
+					canvas,
+					crop.x,
+					crop.y,
+					crop.width,
+					crop.height,
+					0,
+					0,
+					modelCanvas.width,
+					modelCanvas.height,
+				);
+				const predictions = await barModelDetectorRef.current(
+					modelCanvas.toDataURL("image/jpeg", 0.92),
+					[...BAR_MODEL_LABELS],
+					{ threshold: 0.07, top_k: 80 },
+				);
+				const scaleX = crop.width / modelCanvas.width;
+				const scaleY = crop.height / modelCanvas.height;
+				const candidates = candidatesFromOwlDetections(predictions, {
+					width: modelCanvas.width,
+					height: modelCanvas.height,
+				})
+					.filter((candidate) => enabledBarItems[candidate.type])
+					.map((candidate) => {
+						const bbox: BoundingBox = [
+							crop.x + candidate.bbox[0] * scaleX,
+							crop.y + candidate.bbox[1] * scaleY,
+							candidate.bbox[2] * scaleX,
+							candidate.bbox[3] * scaleY,
+						];
+						return {
+							...candidate,
+							bbox,
+							appearance: colorSignature(canvas, bbox),
+						};
 					});
-			} else if (
-				!barSemanticDetectorRef.current &&
-				barSemanticStatus === "idle"
-			) {
-				void getBarSemanticDetector().catch(() => undefined);
-			}
-
-			const freshModelCandidates =
-				now - lastBarModelResultAtRef.current <= 1_500
-					? lastModelCandidatesRef.current
-					: [];
-			const candidates = fuseSemanticWithMotion(
-				motionResult.candidates,
-				freshModelCandidates,
-			).filter((candidate) => enabledBarItems[candidate.type]);
-			const minimumTravel = Math.max(24, canvas.width * 0.04);
-			const tracked = updateObjectTracks(barTracksRef.current, candidates, {
-				now,
-				line: lineToCanvas(countingLine, canvas),
-				direction: countingDirection,
-				minHits: 5,
-				maxMisses: 12,
-				matchDistance: Math.max(canvas.width, canvas.height) * 0.2,
-				lineTolerance: Math.max(7, canvas.width * 0.008),
-				minTravelDistance: minimumTravel,
-				gatePadding: Math.max(10, canvas.width * 0.025),
-				idPrefix: barSessionIdRef.current,
-			});
-			barTracksRef.current = tracked.tracks;
-			setBarTracks(tracked.tracks);
-			const confirmedTracks = tracked.tracks.filter((track) =>
-				isConfirmedBarTrack(track, canvas.width),
-			);
-			setBarDetectionCount(
-				confirmedTracks.filter((track) => track.misses <= 1).length,
-			);
-			if (tracked.events.length > 0) {
-				setBarEvents((current) => [...tracked.events, ...current].slice(0, 20));
-				for (const event of tracked.events) {
-					mutateBarExit({
-						cameraId: selected.id,
-						trackId: event.trackId,
-						itemType: event.type,
-						confidenceAvg: event.confidence,
-						direction: event.direction,
-						zone: draft.location || "Barra",
-					});
+				setBarRawDetectionCount(candidates.length);
+				const tracked = updateBarTracks(barTracksRef.current, candidates, {
+					now: Date.now(),
+					line: lineToCanvas(countingLine, canvas),
+					direction: countingDirection,
+					frameWidth: canvas.width,
+					frameHeight: canvas.height,
+					minHits: 3,
+					minConfirmMs: 450,
+					maxMisses: 4,
+					maxLostMs: 2_400,
+					lineTolerance: Math.max(7, canvas.width * 0.009),
+					minTravelDistance: Math.max(24, canvas.width * 0.035),
+					gatePadding: Math.max(12, canvas.width * 0.025),
+					idPrefix: barSessionIdRef.current,
+				});
+				barTracksRef.current = tracked.tracks;
+				setBarTracks(tracked.tracks);
+				setBarDetectionCount(tracked.tracks.filter(isVisibleBarTrack).length);
+				if (tracked.events.length > 0) {
+					setBarEvents((current) =>
+						[...tracked.events, ...current].slice(0, 20),
+					);
+					for (const event of tracked.events) {
+						mutateBarExit({
+							cameraId: selected.id,
+							trackId: event.trackId,
+							itemType: event.type,
+							confidenceAvg: event.confidence,
+							direction: event.direction,
+							zone: draft.location || "Barra",
+						});
+					}
 				}
+				drawDetections(canvas, [], tracked.tracks);
+				setBarInferenceMs(Math.round(performance.now() - inferenceStartedAt));
+				setDetection({
+					configured: true,
+					personCount: 0,
+					confidenceAvg: null,
+					message: "OWLv2 y seguimiento temporal activos.",
+				});
+			} catch (error) {
+				setBarModelStatus("error");
+				setCameraError(
+					error instanceof Error
+						? `Falló OWLv2: ${error.message}`
+						: "Falló el detector OWLv2.",
+				);
+			} finally {
+				barModelBusyRef.current = false;
 			}
-			drawDetections(canvas, [], tracked.tracks);
-			setDetection({
-				configured: true,
-				personCount: 0,
-				confidenceAvg: null,
-				message: "Zona calibrada y seguimiento de salida activo.",
-			});
 		},
 		[
-			barSemanticStatus,
+			barModelStatus,
 			countingDirection,
 			countingLine,
 			drawDetections,
 			draft.location,
 			enabledBarItems,
-			getBarSemanticDetector,
+			getBarModelDetector,
 			mutateBarExit,
 			selected,
 		],
@@ -966,9 +900,7 @@ export default function CamerasPage() {
 	);
 	const savedExitEvents = data?.exitEvents ?? [];
 	const exitSummary = summarizeExitEvents([...barEvents, ...savedExitEvents]);
-	const confirmedBarTracks = barTracks.filter((track) =>
-		isConfirmedBarTrack(track, canvasRef.current?.width ?? 1280),
-	);
+	const confirmedBarTracks = barTracks.filter(isVisibleBarTrack);
 
 	useEffect(() => {
 		const resetKey = `${mode}:${countingDirection}:${countingLine.start.x}:${countingLine.start.y}:${countingLine.end.x}:${countingLine.end.y}`;
@@ -979,21 +911,15 @@ export default function CamerasPage() {
 
 	useEffect(() => {
 		if (mode === "bar_exit") {
-			void getBarSemanticDetector().catch(() => undefined);
-			if (running) beginBarCalibration();
+			void getBarModelDetector().catch(() => undefined);
+			if (running) resetBarTracking();
 			return;
 		}
 		if (!running) return;
 		void getObjectDetector().catch(() => undefined);
-	}, [
-		mode,
-		running,
-		beginBarCalibration,
-		getBarSemanticDetector,
-		getObjectDetector,
-	]);
+	}, [mode, running, resetBarTracking, getBarModelDetector, getObjectDetector]);
 
-	const handleOverlayPointerDown = useCallback(
+	const moveCountingGate = useCallback(
 		(event: React.PointerEvent<HTMLCanvasElement>) => {
 			if (mode !== "bar_exit") return;
 			const rect = event.currentTarget.getBoundingClientRect();
@@ -1005,6 +931,34 @@ export default function CamerasPage() {
 			);
 		},
 		[countingDirection, mode],
+	);
+
+	const handleOverlayPointerDown = useCallback(
+		(event: React.PointerEvent<HTMLCanvasElement>) => {
+			if (mode !== "bar_exit") return;
+			gateDraggingRef.current = true;
+			event.currentTarget.setPointerCapture(event.pointerId);
+			moveCountingGate(event);
+		},
+		[mode, moveCountingGate],
+	);
+
+	const handleOverlayPointerMove = useCallback(
+		(event: React.PointerEvent<HTMLCanvasElement>) => {
+			if (!gateDraggingRef.current) return;
+			moveCountingGate(event);
+		},
+		[moveCountingGate],
+	);
+
+	const handleOverlayPointerUp = useCallback(
+		(event: React.PointerEvent<HTMLCanvasElement>) => {
+			gateDraggingRef.current = false;
+			if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+				event.currentTarget.releasePointerCapture(event.pointerId);
+			}
+		},
+		[],
 	);
 
 	const changeCountingDirection = useCallback(
@@ -1038,8 +992,7 @@ export default function CamerasPage() {
 					<Badge
 						variant={
 							mode === "bar_exit"
-								? barSemanticStatus === "error" ||
-									barSemanticStatus === "unsupported"
+								? barModelStatus === "error" || barModelStatus === "unsupported"
 									? "destructive"
 									: "default"
 								: detectorStatus === "error"
@@ -1048,7 +1001,7 @@ export default function CamerasPage() {
 						}
 					>
 						{mode === "bar_exit"
-							? semanticStatusLabel(barSemanticStatus, barSemanticProgress)
+							? barModelStatusLabel(barModelStatus, barModelProgress)
 							: detectorStatus === "ready"
 								? "Detector local listo"
 								: detectorStatus === "loading"
@@ -1119,7 +1072,7 @@ export default function CamerasPage() {
 						</CardTitle>
 						<CardDescription>
 							{mode === "bar_exit"
-								? "Toca una vez sobre el video donde salen los pedidos. La zona se orienta sola y solo cuenta objetos verificados."
+								? "Arrastra la línea naranja hasta el punto de salida. Solo se cuentan objetos confirmados por OWLv2 al completar el cruce."
 								: "La webcam sirve para demo. Para camara IP usa una URL HTTP/MJPEG o snapshot accesible desde la misma red."}
 						</CardDescription>
 					</CardHeader>
@@ -1145,6 +1098,9 @@ export default function CamerasPage() {
 							<canvas
 								ref={overlayCanvasRef}
 								onPointerDown={handleOverlayPointerDown}
+								onPointerMove={handleOverlayPointerMove}
+								onPointerUp={handleOverlayPointerUp}
+								onPointerCancel={handleOverlayPointerUp}
 								className={`absolute inset-0 h-full w-full ${
 									mode === "bar_exit"
 										? "cursor-pointer touch-none"
@@ -1195,10 +1151,11 @@ export default function CamerasPage() {
 								enabledBarItems={enabledBarItems}
 								setEnabledBarItems={setEnabledBarItems}
 								barDetectionCount={barDetectionCount}
+								barRawDetectionCount={barRawDetectionCount}
 								barTracks={confirmedBarTracks}
-								motionState={barMotionState}
+								modelStatus={barModelStatus}
+								inferenceMs={barInferenceMs}
 								exitSummary={exitSummary}
-								onCalibrate={beginBarCalibration}
 								onCenterGate={() =>
 									setCountingLine(
 										placeCountingGate(countingDirection, {
@@ -1208,7 +1165,7 @@ export default function CamerasPage() {
 									)
 								}
 								onReset={() => {
-									beginBarCalibration();
+									resetBarTracking();
 									setBarEvents([]);
 								}}
 							/>
@@ -1254,11 +1211,11 @@ export default function CamerasPage() {
 						)}
 						{mode === "bar_exit" ? (
 							<BarEngineStatus
-								motionState={barMotionState}
-								semanticStatus={barSemanticStatus}
-								semanticProgress={barSemanticProgress}
+								modelStatus={barModelStatus}
+								modelProgress={barModelProgress}
 								visibleObjects={barDetectionCount}
 								activeTracks={confirmedBarTracks.length}
+								inferenceMs={barInferenceMs}
 							/>
 						) : (
 							<DetectionStatus
@@ -1570,10 +1527,11 @@ function BarExitPanel({
 	enabledBarItems,
 	setEnabledBarItems,
 	barDetectionCount,
+	barRawDetectionCount,
 	barTracks,
-	motionState,
+	modelStatus,
+	inferenceMs,
 	exitSummary,
-	onCalibrate,
 	onCenterGate,
 	onReset,
 }: {
@@ -1584,15 +1542,11 @@ function BarExitPanel({
 		React.SetStateAction<Record<BarItemType, boolean>>
 	>;
 	barDetectionCount: number;
-	barTracks: ObjectTrack[];
-	motionState: {
-		state: MotionCalibrationState;
-		progress: number;
-		foregroundRatio: number;
-		noiseLevel: number;
-	};
+	barRawDetectionCount: number;
+	barTracks: BarTrack[];
+	modelStatus: BarModelStatus;
+	inferenceMs: number | null;
 	exitSummary: Record<BarItemType, number>;
-	onCalibrate: () => void;
 	onCenterGate: () => void;
 	onReset: () => void;
 }) {
@@ -1603,63 +1557,48 @@ function BarExitPanel({
 		"bottom_to_top",
 	];
 	const items: BarItemType[] = ["plate", "glass", "bottle", "can"];
+	const ready = modelStatus === "ready";
 
 	return (
-		<div className="rounded-2xl border border-amber-300/40 bg-amber-50/50 p-4 text-sm dark:bg-amber-950/20">
-			<div className="mb-4 flex flex-col gap-3 rounded-xl border bg-background/80 p-3 sm:flex-row sm:items-center sm:justify-between">
+		<div className="rounded-2xl border border-primary/25 bg-primary/5 p-4 text-sm">
+			<div className="mb-4 flex flex-col gap-3 rounded-xl border bg-background p-3 sm:flex-row sm:items-center sm:justify-between">
 				<div className="flex items-start gap-3">
 					<div
-						className={`mt-1 h-2.5 w-2.5 rounded-full ${
-							motionState.state === "ready"
+						className={
+							"mt-1 h-2.5 w-2.5 rounded-full" +
+							(ready
 								? "bg-emerald-500"
-								: motionState.state === "unstable"
+								: modelStatus === "error" || modelStatus === "unsupported"
 									? "bg-red-500"
-									: "bg-amber-500"
-						}`}
+									: "bg-amber-500")
+						}
 					/>
 					<div>
 						<div className="font-semibold">
-							{motionState.state === "ready"
-								? "Zona lista"
-								: motionState.state === "unstable"
-									? "La cámara se movió"
-									: motionState.state === "calibrating"
-										? `Calibrando ${Math.round(motionState.progress * 100)}%`
-										: "Falta calibrar"}
+							{ready ? "Conteo listo" : barModelStatusLabel(modelStatus, 0)}
 						</div>
 						<div className="text-muted-foreground text-xs">
-							{motionState.state === "ready"
-								? "La franja azul limita el área observada; la línea naranja registra la salida."
-								: "Deja libre el área de paso durante dos segundos."}
+							Arrastra la línea naranja sobre el punto por donde salen los
+							pedidos.
 						</div>
 					</div>
 				</div>
-				<div className="flex flex-wrap gap-2">
-					<Button
-						type="button"
-						size="sm"
-						variant="outline"
-						onClick={onCenterGate}
-					>
-						Centrar salida
-					</Button>
-					<Button
-						type="button"
-						size="sm"
-						variant="outline"
-						onClick={onCalibrate}
-					>
-						<RefreshCwIcon className="mr-2 h-4 w-4" />
-						Calibrar zona vacía
-					</Button>
-				</div>
+				<Button
+					type="button"
+					size="sm"
+					variant="outline"
+					onClick={onCenterGate}
+				>
+					Centrar línea
+				</Button>
 			</div>
-			<div className="grid gap-4 xl:grid-cols-[1fr_0.9fr]">
+
+			<div className="grid gap-5 xl:grid-cols-[1fr_0.9fr]">
 				<div>
-					<div className="font-semibold text-base">Salida de barra</div>
+					<div className="font-semibold text-base">Qué debe contar</div>
 					<div className="mt-1 text-muted-foreground text-xs">
-						Cada objeto conserva su identificador aunque se oculte brevemente y
-						solo se registra al completar el cruce.
+						Las propuestas débiles se descartan y un objeto necesita varias
+						lecturas coherentes antes de aparecer.
 					</div>
 					<div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
 						{items.map((item) => (
@@ -1679,7 +1618,11 @@ function BarExitPanel({
 							</Button>
 						))}
 					</div>
-					<div className="mt-3 grid gap-2 sm:grid-cols-2">
+
+					<div className="mt-5 font-semibold text-base">
+						Dirección de salida
+					</div>
+					<div className="mt-2 grid gap-2 sm:grid-cols-2">
 						{directions.map((direction) => (
 							<Button
 								key={direction}
@@ -1695,10 +1638,19 @@ function BarExitPanel({
 						))}
 					</div>
 				</div>
+
 				<div className="grid grid-cols-2 gap-2 text-center text-xs">
-					<SmallStat label="visibles" value={barDetectionCount} />
 					<SmallStat
-						label="tracks activos"
+						label="candidatos del modelo"
+						value={barRawDetectionCount}
+					/>
+					<SmallStat label="objetos confirmados" value={barDetectionCount} />
+					<SmallStat
+						label="tiempo por lectura"
+						value={inferenceMs === null ? "—" : `${inferenceMs} ms`}
+					/>
+					<SmallStat
+						label="seguimientos activos"
 						value={barTracks.filter((track) => track.misses === 0).length}
 					/>
 					<SmallStat label="platos" value={exitSummary.plate} />
@@ -1852,83 +1804,53 @@ function LabeledInput({
 }
 
 function BarEngineStatus({
-	motionState,
-	semanticStatus,
-	semanticProgress,
+	modelStatus,
+	modelProgress,
 	visibleObjects,
 	activeTracks,
+	inferenceMs,
 }: {
-	motionState: {
-		state: MotionCalibrationState;
-		progress: number;
-		foregroundRatio: number;
-		noiseLevel: number;
-	};
-	semanticStatus: BarSemanticStatus;
-	semanticProgress: number;
+	modelStatus: BarModelStatus;
+	modelProgress: number;
 	visibleObjects: number;
 	activeTracks: number;
+	inferenceMs: number | null;
 }) {
-	if (semanticStatus === "unsupported" || semanticStatus === "error") {
+	if (modelStatus === "unsupported" || modelStatus === "error") {
 		return (
 			<div className="flex items-start gap-2 rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-destructive text-sm">
 				<AlertTriangleIcon className="mt-0.5 h-4 w-4" />
 				<div>
-					<div className="font-medium">Verificación visual desactivada</div>
+					<div className="font-medium">El detector no está disponible</div>
 					<div>
-						{semanticStatus === "unsupported"
-							? "Usa Chrome o Edge con WebGPU. No se contarán movimientos sin verificar."
-							: "El modelo visual falló. No se contarán objetos hasta recargarlo."}
+						{modelStatus === "unsupported"
+							? "Abre esta página en Chrome o Edge actualizado con WebGPU."
+							: "OWLv2 no pudo completar la inferencia. Recarga la página para volver a descargar el modelo."}
 					</div>
 				</div>
 			</div>
 		);
 	}
 
-	if (semanticStatus === "loading") {
+	if (modelStatus === "loading") {
 		return (
 			<div className="rounded-xl border border-sky-300 bg-sky-50 p-3 text-sky-950 text-sm dark:bg-sky-950/30 dark:text-sky-100">
 				<div className="flex items-center gap-2 font-medium">
 					<RefreshCwIcon className="h-4 w-4 animate-spin" />
-					Preparando detector de platos y bebidas ({semanticProgress}%)
+					Descargando OWLv2 ({modelProgress}%)
 				</div>
 				<div className="mt-1 text-xs opacity-80">
-					La primera descarga es pesada; después queda guardada en el navegador.
+					La descarga cuantizada es de aproximadamente 128 MB y después queda
+					guardada en el navegador.
 				</div>
 			</div>
 		);
 	}
 
-	if (motionState.state === "calibrating") {
-		return (
-			<div className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-amber-950 text-sm dark:bg-amber-950/30 dark:text-amber-100">
-				<div className="flex items-center gap-2 font-medium">
-					<RefreshCwIcon className="h-4 w-4 animate-spin" />
-					Calibrando la zona de paso ({Math.round(motionState.progress * 100)}%)
-				</div>
-				<div className="mt-1 text-xs opacity-80">
-					No cruces objetos hasta que termine.
-				</div>
-			</div>
-		);
-	}
-
-	if (motionState.state === "unstable") {
-		return (
-			<div className="flex items-start gap-2 rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-destructive text-sm">
-				<AlertTriangleIcon className="mt-0.5 h-4 w-4" />
-				<div>
-					<div className="font-medium">La vista cambió demasiado</div>
-					<div>Fija la cámara y pulsa “Calibrar zona vacía”.</div>
-				</div>
-			</div>
-		);
-	}
-
-	if (motionState.state !== "ready" || semanticStatus !== "ready") {
+	if (modelStatus !== "ready") {
 		return (
 			<div className="rounded-xl border bg-muted p-3 text-muted-foreground text-sm">
-				Enciende la cámara y calibra la zona antes de contar salidas.
+				Enciende la cámara para preparar el detector.
 			</div>
 		);
 	}
@@ -1937,11 +1859,12 @@ function BarEngineStatus({
 		<div className="flex flex-col gap-2 rounded-xl border border-emerald-300/50 bg-emerald-50 p-3 text-emerald-950 text-sm sm:flex-row sm:items-center sm:justify-between dark:bg-emerald-950/25 dark:text-emerald-100">
 			<div className="flex items-center gap-2 font-medium">
 				<CheckCircle2Icon className="h-4 w-4" />
-				Detección visual y seguimiento activos
+				OWLv2 y seguimiento temporal activos
 			</div>
-			<div className="flex gap-4 text-xs">
-				<span>{visibleObjects} objeto(s) visibles</span>
+			<div className="flex flex-wrap gap-4 text-xs">
+				<span>{visibleObjects} objeto(s) confirmados</span>
 				<span>{activeTracks} seguimiento(s)</span>
+				{inferenceMs !== null ? <span>{inferenceMs} ms</span> : null}
 			</div>
 		</div>
 	);
@@ -2080,16 +2003,8 @@ function isReliablePersonPrediction(
 	return areaRatio >= 0.02 || prediction.score >= 0.58;
 }
 
-function isConfirmedBarTrack(track: ObjectTrack, referenceWidth: number) {
-	const netDisplacement = Math.hypot(
-		track.center.x - track.firstCenter.x,
-		track.center.y - track.firstCenter.y,
-	);
-	return (
-		track.hits >= 5 &&
-		track.misses <= 2 &&
-		(track.counted || netDisplacement >= Math.max(12, referenceWidth * 0.012))
-	);
+function isVisibleBarTrack(track: BarTrack) {
+	return track.state === "confirmed" && track.misses <= 2;
 }
 
 function lineToCanvas(
@@ -2109,52 +2024,57 @@ function lineToCanvas(
 	};
 }
 
-function analyzeMovingServedObjects(
-	source: HTMLCanvasElement,
-	motionCanvasRef: React.MutableRefObject<HTMLCanvasElement | null>,
-	detector: AdaptiveMotionDetector,
-	region: NormalizedRegion,
-): MotionAnalysis {
-	if (!motionCanvasRef.current) {
-		motionCanvasRef.current = document.createElement("canvas");
-	}
-	const motionCanvas = motionCanvasRef.current;
-	const width = 320;
-	const height = Math.max(
-		160,
-		Math.round((source.height / source.width) * width),
-	);
-	if (motionCanvas.width !== width) motionCanvas.width = width;
-	if (motionCanvas.height !== height) motionCanvas.height = height;
-	const context = motionCanvas.getContext("2d", { willReadFrequently: true });
-	if (!context) {
-		return {
-			state: detector.getState(),
-			progress: 0,
-			candidates: [],
-			foregroundRatio: 0,
-			noiseLevel: 0,
-			componentCount: 0,
-			region,
-		};
-	}
-	context.drawImage(source, 0, 0, width, height);
-	const frame = context.getImageData(0, 0, width, height);
-	const analysis = detector.analyze(frame, region);
-	const scaleX = source.width / width;
-	const scaleY = source.height / height;
+function regionToPixels(
+	region: { x: number; y: number; width: number; height: number },
+	frameWidth: number,
+	frameHeight: number,
+) {
+	const x = Math.max(0, Math.floor(region.x * frameWidth));
+	const y = Math.max(0, Math.floor(region.y * frameHeight));
 	return {
-		...analysis,
-		candidates: analysis.candidates.map((candidate) => ({
-			...candidate,
-			bbox: [
-				candidate.bbox[0] * scaleX,
-				candidate.bbox[1] * scaleY,
-				candidate.bbox[2] * scaleX,
-				candidate.bbox[3] * scaleY,
-			],
-		})),
+		x,
+		y,
+		width: Math.max(
+			1,
+			Math.min(frameWidth - x, Math.ceil(region.width * frameWidth)),
+		),
+		height: Math.max(
+			1,
+			Math.min(frameHeight - y, Math.ceil(region.height * frameHeight)),
+		),
 	};
+}
+
+function colorSignature(
+	canvas: HTMLCanvasElement,
+	bbox: BoundingBox,
+): number[] | undefined {
+	const context = canvas.getContext("2d", { willReadFrequently: true });
+	if (!context) return undefined;
+	const x = Math.max(0, Math.floor(bbox[0]));
+	const y = Math.max(0, Math.floor(bbox[1]));
+	const width = Math.max(1, Math.min(canvas.width - x, Math.ceil(bbox[2])));
+	const height = Math.max(1, Math.min(canvas.height - y, Math.ceil(bbox[3])));
+	try {
+		const pixels = context.getImageData(x, y, width, height).data;
+		const bins = new Array<number>(12).fill(0);
+		const pixelCount = width * height;
+		const step = Math.max(1, Math.floor(Math.sqrt(pixelCount / 500)));
+		let samples = 0;
+		for (let pixel = 0; pixel < pixelCount; pixel += step) {
+			const offset = pixel * 4;
+			const red = pixels[offset] ?? 0;
+			const green = pixels[offset + 1] ?? 0;
+			const blue = pixels[offset + 2] ?? 0;
+			bins[Math.min(3, Math.floor(red / 64))] += 1;
+			bins[4 + Math.min(3, Math.floor(green / 64))] += 1;
+			bins[8 + Math.min(3, Math.floor(blue / 64))] += 1;
+			samples += 1;
+		}
+		return bins.map((value) => value / Math.max(1, samples));
+	} catch {
+		return undefined;
+	}
 }
 
 function modelFileProgress(event: unknown) {
@@ -2173,12 +2093,12 @@ function modelFileProgress(event: unknown) {
 	return Math.max(0, Math.min(100, Math.round(progressEvent.progress)));
 }
 
-function semanticStatusLabel(status: BarSemanticStatus, progress: number) {
-	if (status === "ready") return "Detector visual listo";
-	if (status === "loading") return `Descargando detector ${progress}%`;
+function barModelStatusLabel(status: BarModelStatus, progress: number) {
+	if (status === "ready") return "OWLv2 listo";
+	if (status === "loading") return `Descargando OWLv2 ${progress}%`;
 	if (status === "unsupported") return "WebGPU no disponible";
-	if (status === "error") return "Detector visual con error";
-	return "Detector visual";
+	if (status === "error") return "OWLv2 con error";
+	return "OWLv2";
 }
 
 async function openCameraStream() {
