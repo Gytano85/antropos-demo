@@ -140,7 +140,7 @@ export function candidatesFromCocoDetections(
 	const candidates: BarCandidate[] = [];
 
 	for (const detection of detections) {
-		if (!Number.isFinite(detection.score) || detection.score < 0.16) continue;
+		if (!Number.isFinite(detection.score) || detection.score < 0.11) continue;
 		const label = normalizeLabel(detection.class);
 		const type = POSITIVE_LABELS.get(label);
 		if (!type) continue;

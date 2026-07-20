@@ -163,6 +163,7 @@ export default function CamerasPage() {
 	const [barEvents, setBarEvents] = useState<BarExitEvent[]>([]);
 	const [barDetectionCount, setBarDetectionCount] = useState(0);
 	const [barRawDetectionCount, setBarRawDetectionCount] = useState(0);
+	const [barRawModelLabels, setBarRawModelLabels] = useState<string[]>([]);
 	const [barInferenceMs, setBarInferenceMs] = useState<number | null>(null);
 	const [barModelStatus, setBarModelStatus] = useState<BarModelStatus>("idle");
 	const [barModelProgress, setBarModelProgress] = useState(0);
@@ -414,6 +415,7 @@ export default function CamerasPage() {
 		setBarCandidates([]);
 		setBarDetectionCount(0);
 		setBarRawDetectionCount(0);
+		setBarRawModelLabels([]);
 		setBarInferenceMs(null);
 	}, []);
 
@@ -656,9 +658,8 @@ export default function CamerasPage() {
 					barModelCanvasRef.current = document.createElement("canvas");
 				}
 				const modelCanvas = barModelCanvasRef.current;
-				const region = trackingRegion(countingLine, countingDirection);
-				const crop = regionToPixels(region, canvas.width, canvas.height);
-				modelCanvas.width = Math.max(320, Math.min(800, crop.width));
+				const crop = { x: 0, y: 0, width: canvas.width, height: canvas.height };
+				modelCanvas.width = Math.max(480, Math.min(960, crop.width));
 				modelCanvas.height = Math.max(
 					240,
 					Math.round((crop.height / crop.width) * modelCanvas.width),
@@ -678,21 +679,25 @@ export default function CamerasPage() {
 				);
 				const scaleX = crop.width / modelCanvas.width;
 				const scaleY = crop.height / modelCanvas.height;
+				let rawModelLabels: string[] = [];
 				const baseCandidates =
 					barModelRuntimeRef.current === "coco"
-						? candidatesFromCocoDetections(
-								(await getObjectDetector().then((detector) =>
-									detector.detect(modelCanvas),
-								)) as Array<{
+						? await getObjectDetector().then(async (detector) => {
+								const raw = (await detector.detect(modelCanvas)) as Array<{
 									class: string;
 									score: number;
 									bbox: BoundingBox;
-								}>,
-								{
+								}>;
+								rawModelLabels = raw
+									.slice(0, 5)
+									.map(
+										(item) => `${item.class} ${Math.round(item.score * 100)}%`,
+									);
+								return candidatesFromCocoDetections(raw, {
 									width: modelCanvas.width,
 									height: modelCanvas.height,
-								},
-							)
+								});
+							})
 						: candidatesFromOwlDetections(
 								await runOwlBarDetector({
 									detector: barModelDetectorRef.current,
@@ -735,6 +740,7 @@ export default function CamerasPage() {
 				barCandidatesRef.current = visibleCandidates;
 				setBarCandidates(visibleCandidates);
 				setBarRawDetectionCount(candidates.length);
+				setBarRawModelLabels(rawModelLabels);
 				const tracked = updateBarTracks(barTracksRef.current, candidates, {
 					now: Date.now(),
 					line: lineToCanvas(countingLine, canvas),
@@ -1254,6 +1260,7 @@ export default function CamerasPage() {
 								setEnabledBarItems={setEnabledBarItems}
 								barDetectionCount={barDetectionCount}
 								barRawDetectionCount={barRawDetectionCount}
+								barRawModelLabels={barRawModelLabels}
 								barTracks={confirmedBarTracks}
 								modelStatus={barModelStatus}
 								modelRuntime={barModelRuntime}
@@ -1635,6 +1642,7 @@ function BarExitPanel({
 	setEnabledBarItems,
 	barDetectionCount,
 	barRawDetectionCount,
+	barRawModelLabels,
 	barTracks,
 	modelStatus,
 	modelRuntime,
@@ -1654,6 +1662,7 @@ function BarExitPanel({
 	>;
 	barDetectionCount: number;
 	barRawDetectionCount: number;
+	barRawModelLabels: string[];
 	barTracks: BarTrack[];
 	modelStatus: BarModelStatus;
 	modelRuntime: BarModelRuntime | null;
@@ -1719,6 +1728,11 @@ function BarExitPanel({
 						Las propuestas débiles se descartan y un objeto necesita varias
 						lecturas coherentes antes de aparecer.
 					</div>
+					{barRawModelLabels.length > 0 ? (
+						<div className="mt-2 rounded-lg border bg-background px-3 py-2 text-muted-foreground text-xs">
+							Ultimo modelo: {barRawModelLabels.join(", ")}
+						</div>
+					) : null}
 					<div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
 						{items.map((item) => (
 							<Button
@@ -2173,27 +2187,6 @@ function moveLineToPoint(line: CountingLine, point: { x: number; y: number }) {
 		start: { x: center.x - halfX, y: center.y - halfY },
 		end: { x: center.x + halfX, y: center.y + halfY },
 	});
-}
-
-function regionToPixels(
-	region: { x: number; y: number; width: number; height: number },
-	frameWidth: number,
-	frameHeight: number,
-) {
-	const x = Math.max(0, Math.floor(region.x * frameWidth));
-	const y = Math.max(0, Math.floor(region.y * frameHeight));
-	return {
-		x,
-		y,
-		width: Math.max(
-			1,
-			Math.min(frameWidth - x, Math.ceil(region.width * frameWidth)),
-		),
-		height: Math.max(
-			1,
-			Math.min(frameHeight - y, Math.ceil(region.height * frameHeight)),
-		),
-	};
 }
 
 function colorSignature(
