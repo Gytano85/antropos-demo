@@ -86,11 +86,17 @@ type DetectionResult = {
 
 type CameraMode = "presence" | "bar_exit";
 type BarModelStatus = "idle" | "loading" | "ready" | "unsupported" | "error";
+type BarModelRuntime = "webgpu" | "wasm";
 type BarModelDetector = (
 	image: string,
 	candidateLabels: string[],
 	options: { threshold: number; top_k: number },
 ) => Promise<BarModelDetection[]>;
+type TransformersPipeline = (
+	task: string,
+	model: string,
+	options: Record<string, unknown>,
+) => Promise<unknown>;
 const TRANSFORMERS_CDN_URL =
 	"https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.2.0";
 
@@ -107,6 +113,7 @@ export default function CamerasPage() {
 	const barModelDetectorPromiseRef = useRef<Promise<BarModelDetector> | null>(
 		null,
 	);
+	const barModelRuntimeRef = useRef<BarModelRuntime | null>(null);
 	const gateDraggingRef = useRef(false);
 	const streamRef = useRef<MediaStream | null>(null);
 	const busyRef = useRef(false);
@@ -148,6 +155,8 @@ export default function CamerasPage() {
 	const [barInferenceMs, setBarInferenceMs] = useState<number | null>(null);
 	const [barModelStatus, setBarModelStatus] = useState<BarModelStatus>("idle");
 	const [barModelProgress, setBarModelProgress] = useState(0);
+	const [barModelRuntime, setBarModelRuntime] =
+		useState<BarModelRuntime | null>(null);
 	const lastBarModelAtRef = useRef(0);
 	const barSessionIdRef = useRef(createVisionSessionId());
 	const loadedBarConfigForRef = useRef<number | null>(null);
@@ -317,18 +326,18 @@ export default function CamerasPage() {
 		return objectDetectorPromiseRef.current;
 	}, []);
 
-	const getBarModelDetector = useCallback(async () => {
+	const getBarModelDetector = useCallback(async (forceCompatible = false) => {
+		if (forceCompatible) {
+			barModelDetectorRef.current = null;
+			barModelDetectorPromiseRef.current = null;
+			barModelRuntimeRef.current = null;
+			setBarModelRuntime(null);
+		}
 		if (barModelDetectorRef.current) return barModelDetectorRef.current;
 		if (!barModelDetectorPromiseRef.current) {
 			const gpuAvailable = Boolean(
 				(navigator as Navigator & { gpu?: unknown }).gpu,
 			);
-			if (!gpuAvailable) {
-				setBarModelStatus("unsupported");
-				throw new Error(
-					"Este navegador no ofrece WebGPU. Usa Chrome o Edge actualizado para ejecutar OWLv2.",
-				);
-			}
 			setBarModelStatus("loading");
 			setBarModelProgress(0);
 			barModelDetectorPromiseRef.current = (async () => {
@@ -336,31 +345,23 @@ export default function CamerasPage() {
 				const { pipeline } = (await import(
 					/* webpackIgnore: true */ moduleUrl
 				)) as {
-					pipeline: (
-						task: string,
-						model: string,
-						options: Record<string, unknown>,
-					) => Promise<unknown>;
+					pipeline: TransformersPipeline;
 				};
-				const loaded = await pipeline(
-					"zero-shot-object-detection",
-					BAR_MODEL_ID,
-					{
-						device: "webgpu",
-						dtype: "q4f16",
-						progress_callback: (event: unknown) => {
-							const progress = modelFileProgress(event);
-							if (progress !== null) setBarModelProgress(progress);
-						},
-					},
-				);
-				const detector = loaded as unknown as BarModelDetector;
+				const { detector, runtime } = await loadBarModelWithFallback({
+					pipeline,
+					gpuAvailable: gpuAvailable && !forceCompatible,
+					onProgress: setBarModelProgress,
+				});
 				barModelDetectorRef.current = detector;
+				barModelRuntimeRef.current = runtime;
+				setBarModelRuntime(runtime);
 				setBarModelProgress(100);
 				setBarModelStatus("ready");
 				return detector;
 			})().catch((error) => {
 				barModelDetectorPromiseRef.current = null;
+				barModelRuntimeRef.current = null;
+				setBarModelRuntime(null);
 				setBarModelStatus("error");
 				throw error;
 			});
@@ -618,11 +619,31 @@ export default function CamerasPage() {
 					modelCanvas.width,
 					modelCanvas.height,
 				);
-				const predictions = await barModelDetectorRef.current(
-					modelCanvas.toDataURL("image/jpeg", 0.92),
-					[...BAR_MODEL_LABELS],
-					{ threshold: 0.07, top_k: 80 },
-				);
+				const modelInput = modelCanvas.toDataURL("image/jpeg", 0.92);
+				let predictions: BarModelDetection[];
+				try {
+					predictions = await barModelDetectorRef.current(
+						modelInput,
+						[...BAR_MODEL_LABELS],
+						{ threshold: 0.07, top_k: 80 },
+					);
+				} catch (error) {
+					if (barModelRuntimeRef.current !== "webgpu") throw error;
+					barModelDetectorRef.current = null;
+					barModelDetectorPromiseRef.current = null;
+					barModelRuntimeRef.current = null;
+					setBarModelRuntime(null);
+					setBarModelStatus("loading");
+					const compatibleDetector = await getBarModelDetector(true);
+					predictions = await compatibleDetector(
+						modelInput,
+						[...BAR_MODEL_LABELS],
+						{
+							threshold: 0.07,
+							top_k: 80,
+						},
+					);
+				}
 				const scaleX = crop.width / modelCanvas.width;
 				const scaleY = crop.height / modelCanvas.height;
 				const candidates = candidatesFromOwlDetections(predictions, {
@@ -982,10 +1003,10 @@ export default function CamerasPage() {
 					<div>
 						<div className="flex items-center gap-2">
 							<CameraIcon className="h-6 w-6 text-primary" />
-							<h1 className="font-bold text-2xl">Cámaras operativas</h1>
+							<h1 className="font-bold text-2xl">Camaras operativas</h1>
 						</div>
 						<p className="mt-1 text-muted-foreground text-sm">
-							Detección local para presencia y conteo de pedidos al salir de
+							Deteccion local para presencia y conteo de pedidos al salir de la
 							barra.
 						</p>
 					</div>
@@ -1001,7 +1022,11 @@ export default function CamerasPage() {
 						}
 					>
 						{mode === "bar_exit"
-							? barModelStatusLabel(barModelStatus, barModelProgress)
+							? barModelStatusLabel(
+									barModelStatus,
+									barModelProgress,
+									barModelRuntime,
+								)
 							: detectorStatus === "ready"
 								? "Detector local listo"
 								: detectorStatus === "loading"
@@ -1154,6 +1179,7 @@ export default function CamerasPage() {
 								barRawDetectionCount={barRawDetectionCount}
 								barTracks={confirmedBarTracks}
 								modelStatus={barModelStatus}
+								modelRuntime={barModelRuntime}
 								inferenceMs={barInferenceMs}
 								exitSummary={exitSummary}
 								onCenterGate={() =>
@@ -1213,6 +1239,7 @@ export default function CamerasPage() {
 							<BarEngineStatus
 								modelStatus={barModelStatus}
 								modelProgress={barModelProgress}
+								modelRuntime={barModelRuntime}
 								visibleObjects={barDetectionCount}
 								activeTracks={confirmedBarTracks.length}
 								inferenceMs={barInferenceMs}
@@ -1530,6 +1557,7 @@ function BarExitPanel({
 	barRawDetectionCount,
 	barTracks,
 	modelStatus,
+	modelRuntime,
 	inferenceMs,
 	exitSummary,
 	onCenterGate,
@@ -1545,6 +1573,7 @@ function BarExitPanel({
 	barRawDetectionCount: number;
 	barTracks: BarTrack[];
 	modelStatus: BarModelStatus;
+	modelRuntime: BarModelRuntime | null;
 	inferenceMs: number | null;
 	exitSummary: Record<BarItemType, number>;
 	onCenterGate: () => void;
@@ -1575,7 +1604,11 @@ function BarExitPanel({
 					/>
 					<div>
 						<div className="font-semibold">
-							{ready ? "Conteo listo" : barModelStatusLabel(modelStatus, 0)}
+							{ready
+								? modelRuntime === "wasm"
+									? "Conteo listo (compatible)"
+									: "Conteo listo"
+								: barModelStatusLabel(modelStatus, 0, modelRuntime)}
 						</div>
 						<div className="text-muted-foreground text-xs">
 							Arrastra la línea naranja sobre el punto por donde salen los
@@ -1806,12 +1839,14 @@ function LabeledInput({
 function BarEngineStatus({
 	modelStatus,
 	modelProgress,
+	modelRuntime,
 	visibleObjects,
 	activeTracks,
 	inferenceMs,
 }: {
 	modelStatus: BarModelStatus;
 	modelProgress: number;
+	modelRuntime: BarModelRuntime | null;
 	visibleObjects: number;
 	activeTracks: number;
 	inferenceMs: number | null;
@@ -1837,7 +1872,7 @@ function BarEngineStatus({
 			<div className="rounded-xl border border-sky-300 bg-sky-50 p-3 text-sky-950 text-sm dark:bg-sky-950/30 dark:text-sky-100">
 				<div className="flex items-center gap-2 font-medium">
 					<RefreshCwIcon className="h-4 w-4 animate-spin" />
-					Descargando OWLv2 ({modelProgress}%)
+					Preparando detector ({modelProgress}%)
 				</div>
 				<div className="mt-1 text-xs opacity-80">
 					La descarga cuantizada es de aproximadamente 128 MB y después queda
@@ -1859,7 +1894,9 @@ function BarEngineStatus({
 		<div className="flex flex-col gap-2 rounded-xl border border-emerald-300/50 bg-emerald-50 p-3 text-emerald-950 text-sm sm:flex-row sm:items-center sm:justify-between dark:bg-emerald-950/25 dark:text-emerald-100">
 			<div className="flex items-center gap-2 font-medium">
 				<CheckCircle2Icon className="h-4 w-4" />
-				OWLv2 y seguimiento temporal activos
+				{modelRuntime === "wasm"
+					? "Detector activo en modo compatible"
+					: "Detector activo"}
 			</div>
 			<div className="flex flex-wrap gap-4 text-xs">
 				<span>{visibleObjects} objeto(s) confirmados</span>
@@ -2093,11 +2130,83 @@ function modelFileProgress(event: unknown) {
 	return Math.max(0, Math.min(100, Math.round(progressEvent.progress)));
 }
 
-function barModelStatusLabel(status: BarModelStatus, progress: number) {
-	if (status === "ready") return "OWLv2 listo";
-	if (status === "loading") return `Descargando OWLv2 ${progress}%`;
-	if (status === "unsupported") return "WebGPU no disponible";
-	if (status === "error") return "OWLv2 con error";
+async function loadBarModelWithFallback({
+	pipeline,
+	gpuAvailable,
+	onProgress,
+}: {
+	pipeline: TransformersPipeline;
+	gpuAvailable: boolean;
+	onProgress: (progress: number) => void;
+}): Promise<{ detector: BarModelDetector; runtime: BarModelRuntime }> {
+	const attempts: Array<{
+		runtime: BarModelRuntime;
+		label: string;
+		options: Record<string, unknown>;
+	}> = [
+		...(gpuAvailable
+			? [
+					{
+						runtime: "webgpu" as const,
+						label: "WebGPU",
+						options: { device: "webgpu", dtype: "q4" },
+					},
+				]
+			: []),
+		{
+			runtime: "wasm",
+			label: "WASM q8",
+			options: { dtype: "q8" },
+		},
+		{
+			runtime: "wasm",
+			label: "WASM q4",
+			options: { dtype: "q4" },
+		},
+	];
+	const errors: string[] = [];
+
+	for (const attempt of attempts) {
+		try {
+			const loaded = await pipeline(
+				"zero-shot-object-detection",
+				BAR_MODEL_ID,
+				{
+					...attempt.options,
+					progress_callback: (event: unknown) => {
+						const progress = modelFileProgress(event);
+						if (progress !== null) onProgress(progress);
+					},
+				},
+			);
+			return {
+				detector: loaded as unknown as BarModelDetector,
+				runtime: attempt.runtime,
+			};
+		} catch (error) {
+			errors.push(
+				`${attempt.label}: ${
+					error instanceof Error ? error.message : String(error)
+				}`,
+			);
+		}
+	}
+
+	throw new Error(errors.join(" | "));
+}
+
+function barModelStatusLabel(
+	status: BarModelStatus,
+	progress: number,
+	runtime?: BarModelRuntime | null,
+) {
+	if (status === "ready")
+		return runtime === "wasm"
+			? "Detector listo (compatible)"
+			: "Detector listo";
+	if (status === "loading") return `Preparando detector ${progress}%`;
+	if (status === "unsupported") return "Detector no disponible";
+	if (status === "error") return "Detector con error";
 	return "OWLv2";
 }
 
