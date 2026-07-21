@@ -144,6 +144,8 @@ export default function CamerasPage() {
 	);
 	const [countingDirection, setCountingDirection] =
 		useState<CountingDirection>("left_to_right");
+	const [countingBandPx, setCountingBandPx] = useState(42);
+	const [barDebugVisible, setBarDebugVisible] = useState(false);
 	const [barTracks, setBarTracks] = useState<BarTrack[]>([]);
 	const barTracksRef = useRef<BarTrack[]>([]);
 	const barVisualTemplatesRef = useRef(new Map<string, VisualTrackTemplate>());
@@ -237,6 +239,8 @@ export default function CamerasPage() {
 					line?: CountingLine;
 					direction?: CountingDirection;
 					enabledItems?: Partial<Record<BarItemType, boolean>>;
+					bandPx?: number;
+					debug?: boolean;
 				};
 				if (saved.line) setCountingLine(normalizeLine(saved.line));
 				if (saved.direction && isCountingDirection(saved.direction)) {
@@ -247,6 +251,12 @@ export default function CamerasPage() {
 						...current,
 						...saved.enabledItems,
 					}));
+				}
+				if (typeof saved.bandPx === "number") {
+					setCountingBandPx(Math.max(18, Math.min(90, saved.bandPx)));
+				}
+				if (typeof saved.debug === "boolean") {
+					setBarDebugVisible(saved.debug);
 				}
 			}
 		} catch {
@@ -268,9 +278,18 @@ export default function CamerasPage() {
 				line: countingLine,
 				direction: countingDirection,
 				enabledItems: enabledBarItems,
+				bandPx: countingBandPx,
+				debug: barDebugVisible,
 			}),
 		);
-	}, [selectedCameraId, countingLine, countingDirection, enabledBarItems]);
+	}, [
+		selectedCameraId,
+		countingLine,
+		countingDirection,
+		enabledBarItems,
+		countingBandPx,
+		barDebugVisible,
+	]);
 
 	const saveCamera = useMutation(
 		trpc.cameras.saveCamera.mutationOptions({
@@ -515,8 +534,8 @@ export default function CamerasPage() {
 					region.height * canvas.height,
 				);
 				context.setLineDash([]);
-				context.strokeStyle = "rgba(245, 158, 11, 0.28)";
-				context.lineWidth = Math.max(28, canvas.width * 0.025);
+				context.strokeStyle = "rgba(245, 158, 11, 0.2)";
+				context.lineWidth = Math.max(countingBandPx, canvas.width * 0.018);
 				context.beginPath();
 				context.moveTo(line.start.x, line.start.y);
 				context.lineTo(line.end.x, line.end.y);
@@ -543,7 +562,8 @@ export default function CamerasPage() {
 					tracks.filter(isDrawableBarTrack).map(projectTrackForDisplay),
 				)) {
 					const [x, y, width, height] = track.bbox;
-					context.strokeStyle = track.counted ? "#22c55e" : "#38bdf8";
+					const state = visualTrackState(track);
+					context.strokeStyle = trackStateColor(state);
 					context.fillStyle = "rgba(0,0,0,0.72)";
 					context.strokeRect(x, y, width, height);
 					if (track.previousCenter) {
@@ -552,14 +572,30 @@ export default function CamerasPage() {
 						context.lineTo(track.center.x, track.center.y);
 						context.stroke();
 					}
-					const label = `${businessItemLabel(track.type)} ${Math.round(
-						track.confidence * 100,
-					)}%${track.counted ? " · contado" : ""}`;
+					const label = barDebugVisible
+						? `${shortTrackId(track.id)} - ${state} - ${Math.round(
+								track.confidence * 100,
+							)}%`
+						: `${businessItemLabel(track.type)} ${Math.round(
+								track.confidence * 100,
+							)}%${track.counted ? " - contado" : ""}`;
 					const labelWidth = context.measureText(label).width + 12;
 					const labelY = Math.max(0, y - 26);
 					context.fillRect(x, labelY, labelWidth, 24);
 					context.fillStyle = "#fff";
 					context.fillText(label, x + 6, labelY + 17);
+					if (barDebugVisible) {
+						context.fillStyle = trackStateColor(state);
+						context.beginPath();
+						context.arc(track.center.x, track.center.y, 4, 0, Math.PI * 2);
+						context.fill();
+						const reason = trackDebugReason(track, line);
+						const reasonWidth = context.measureText(reason).width + 12;
+						context.fillStyle = "rgba(0,0,0,0.68)";
+						context.fillRect(x, y + height + 4, reasonWidth, 22);
+						context.fillStyle = "#fff";
+						context.fillText(reason, x + 6, y + height + 20);
+					}
 				}
 				return;
 			}
@@ -576,7 +612,7 @@ export default function CamerasPage() {
 				context.fillText(label, x + 6, labelY + 17);
 			}
 		},
-		[countingDirection, countingLine, mode],
+		[barDebugVisible, countingBandPx, countingDirection, countingLine, mode],
 	);
 
 	const processBarExitFrame = useCallback(
@@ -593,8 +629,8 @@ export default function CamerasPage() {
 				visuallyTracked,
 				lineToCanvas(countingLine, canvas),
 				countingDirection,
-				Math.max(18, canvas.width * 0.026),
-				Math.max(12, canvas.width * 0.025),
+				Math.max(14, countingBandPx * 0.46),
+				Math.max(12, countingBandPx * 0.75),
 				now,
 			);
 			visuallyTracked = visualCrossing.tracks;
@@ -723,9 +759,9 @@ export default function CamerasPage() {
 					minConfirmMs: 120,
 					maxMisses: 10,
 					maxLostMs: 4_500,
-					lineTolerance: Math.max(7, canvas.width * 0.009),
-					minTravelDistance: Math.max(24, canvas.width * 0.035),
-					gatePadding: Math.max(12, canvas.width * 0.025),
+					lineTolerance: Math.max(8, countingBandPx * 0.45),
+					minTravelDistance: Math.max(16, countingBandPx * 0.48),
+					gatePadding: Math.max(12, countingBandPx * 0.75),
 					idPrefix: barSessionIdRef.current,
 				});
 				barTracksRef.current = tracked.tracks;
@@ -776,6 +812,7 @@ export default function CamerasPage() {
 		},
 		[
 			barModelStatus,
+			countingBandPx,
 			countingDirection,
 			countingLine,
 			drawDetections,
@@ -1245,6 +1282,10 @@ export default function CamerasPage() {
 							<BarExitPanel
 								countingDirection={countingDirection}
 								setCountingDirection={changeCountingDirection}
+								countingBandPx={countingBandPx}
+								setCountingBandPx={setCountingBandPx}
+								debugVisible={barDebugVisible}
+								setDebugVisible={setBarDebugVisible}
 								enabledBarItems={enabledBarItems}
 								setEnabledBarItems={setEnabledBarItems}
 								barDetectionCount={barDetectionCount}
@@ -1628,6 +1669,10 @@ function ModeButton({
 function BarExitPanel({
 	countingDirection,
 	setCountingDirection,
+	countingBandPx,
+	setCountingBandPx,
+	debugVisible,
+	setDebugVisible,
 	enabledBarItems,
 	setEnabledBarItems,
 	barDetectionCount,
@@ -1647,6 +1692,10 @@ function BarExitPanel({
 }: {
 	countingDirection: CountingDirection;
 	setCountingDirection: (direction: CountingDirection) => void;
+	countingBandPx: number;
+	setCountingBandPx: React.Dispatch<React.SetStateAction<number>>;
+	debugVisible: boolean;
+	setDebugVisible: React.Dispatch<React.SetStateAction<boolean>>;
 	enabledBarItems: Record<BarItemType, boolean>;
 	setEnabledBarItems: React.Dispatch<
 		React.SetStateAction<Record<BarItemType, boolean>>
@@ -1778,6 +1827,35 @@ function BarExitPanel({
 							</Button>
 						))}
 					</div>
+					<div className="mt-5 space-y-2">
+						<div className="flex items-center justify-between gap-3">
+							<div>
+								<div className="font-semibold text-base">Banda de conteo</div>
+								<div className="text-muted-foreground text-xs">
+									Más ancha tolera pases rápidos y diagonales.
+								</div>
+							</div>
+							<div className="font-semibold">{countingBandPx}px</div>
+						</div>
+						<Input
+							type="range"
+							min={18}
+							max={90}
+							value={countingBandPx}
+							onChange={(event) =>
+								setCountingBandPx(Number(event.currentTarget.value))
+							}
+						/>
+					</div>
+					<Button
+						type="button"
+						variant={debugVisible ? "default" : "outline"}
+						size="sm"
+						className="mt-4 w-full"
+						onClick={() => setDebugVisible((current) => !current)}
+					>
+						{debugVisible ? "Ocultar debug visual" : "Mostrar debug visual"}
+					</Button>
 				</div>
 
 				<div className="grid grid-cols-2 gap-2 text-center text-xs">
@@ -2275,6 +2353,45 @@ function canVisualCountTrack(track: BarTrack) {
 	return (
 		track.state === "confirmed" || (track.hits >= 1 && track.confidence >= 0.2)
 	);
+}
+
+type VisualTrackState =
+	| "nuevo"
+	| "siguiendo"
+	| "cerca-linea"
+	| "contado"
+	| "perdido";
+
+function visualTrackState(track: BarTrack): VisualTrackState {
+	const age = Date.now() - track.lastSeenAt;
+	if (track.counted) return "contado";
+	if (track.misses > 0 || age > 260) return "perdido";
+	if (track.state !== "confirmed") return "nuevo";
+	if (track.lastSide === 0) return "cerca-linea";
+	return "siguiendo";
+}
+
+function trackStateColor(state: VisualTrackState) {
+	if (state === "contado") return "#22c55e";
+	if (state === "perdido") return "#ef4444";
+	if (state === "cerca-linea") return "#f59e0b";
+	if (state === "nuevo") return "#a78bfa";
+	return "#38bdf8";
+}
+
+function shortTrackId(id: string) {
+	return id.split("-").slice(-2).join("-");
+}
+
+function trackDebugReason(track: BarTrack, line: CountingLine) {
+	if (track.counted) return "contada";
+	if (track.misses > 0) return `perdida ${track.misses}`;
+	if (track.state !== "confirmed") return `nueva h${track.hits}`;
+	if (!track.previousCenter) return "sin trayectoria";
+	const side = visualStableSide(track.center, line, 6);
+	if (side === 0) return "dentro de banda";
+	if (track.lastSide === side) return "mismo lado";
+	return "lista para cruce";
 }
 
 function refineTracksWithVisualTemplates(
