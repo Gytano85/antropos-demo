@@ -85,6 +85,20 @@ describe("bar service OWLv2 post-processing", () => {
 		expect(candidates[0]?.type).toBe("glass");
 	});
 
+	it("merges overlapping drink labels into one candidate", () => {
+		const candidates = candidatesFromCocoDetections(
+			[
+				{ class: "cup", score: 0.62, bbox: [120, 90, 90, 130] },
+				{ class: "wine glass", score: 0.55, bbox: [126, 96, 82, 118] },
+				{ class: "bottle", score: 0.49, bbox: [118, 86, 96, 138] },
+			],
+			frame,
+		);
+
+		expect(candidates).toHaveLength(1);
+		expect(candidates[0]?.type).toBe("glass");
+	});
+
 	it("maps every Beverage Containers class to a bar item type", () => {
 		const expected: Record<string, string> = {
 			"bottle-glass": "bottle",

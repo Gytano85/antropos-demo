@@ -253,6 +253,12 @@ function suppressNearDuplicates(candidates: BarCandidate[]) {
 	for (const candidate of candidates) {
 		const duplicate = kept.some((current) => {
 			const overlap = intersectionOverSmaller(current.bbox, candidate.bbox);
+			if (isDrink(current.type) && isDrink(candidate.type)) {
+				if (overlap >= 0.52) return true;
+				if (intersectionOverUnion(current.bbox, candidate.bbox) >= 0.28)
+					return true;
+				return centerDistanceRatio(current.bbox, candidate.bbox) <= 0.28;
+			}
 			if (overlap < 0.9) return false;
 			if (current.type === candidate.type) return true;
 			return intersectionOverUnion(current.bbox, candidate.bbox) >= 0.78;
@@ -260,6 +266,18 @@ function suppressNearDuplicates(candidates: BarCandidate[]) {
 		if (!duplicate) kept.push(candidate);
 	}
 	return kept;
+}
+
+function isDrink(type: BarItemType) {
+	return type === "glass" || type === "bottle" || type === "can";
+}
+
+function centerDistanceRatio(a: BoundingBox, b: BoundingBox) {
+	const centerA = { x: a[0] + a[2] / 2, y: a[1] + a[3] / 2 };
+	const centerB = { x: b[0] + b[2] / 2, y: b[1] + b[3] / 2 };
+	const distance = Math.hypot(centerA.x - centerB.x, centerA.y - centerB.y);
+	const size = Math.max(1, Math.max(a[2], a[3], b[2], b[3]));
+	return distance / size;
 }
 
 function weightedBox(cluster: PositiveDetection[]): BoundingBox {

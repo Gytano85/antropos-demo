@@ -139,6 +139,20 @@ describe("bar service tracker", () => {
 		);
 		expect(result.tracks).toHaveLength(2);
 	});
+
+	it("does not open multiple tracks for duplicate drink boxes", () => {
+		const result = updateBarTracks(
+			[],
+			[
+				drinkCandidate(300, 300, "glass", 0.6),
+				drinkCandidate(306, 305, "bottle", 0.52),
+				drinkCandidate(294, 296, "can", 0.48),
+			],
+			{ ...options, now: 0 },
+		);
+
+		expect(result.tracks).toHaveLength(1);
+	});
 });
 
 function drinkCandidate(

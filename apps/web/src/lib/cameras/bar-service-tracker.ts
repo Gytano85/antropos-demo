@@ -222,6 +222,11 @@ export function updateBarTracks(
 		if (candidatesUsed.has(index)) continue;
 		const candidate = candidates[index];
 		if (!candidate) continue;
+		if (
+			nextTracks.some((track) => isDuplicateTrackCandidate(track, candidate))
+		) {
+			continue;
+		}
 		const center = bboxCenter(candidate.bbox);
 		const side = stableSide(center, settings.line, lineTolerance);
 		nextTracks.push({
@@ -367,6 +372,25 @@ function optimalAssignments(
 	};
 
 	return solve(0, 0).pairs;
+}
+
+function isDuplicateTrackCandidate(track: BarTrack, candidate: BarCandidate) {
+	if (itemGroup(track.type) !== itemGroup(candidate.type)) return false;
+	const overlap = intersectionOverSmaller(track.bbox, candidate.bbox);
+	if (itemGroup(track.type) === "drink") {
+		if (overlap >= 0.42) return true;
+		if (intersectionOverUnion(track.bbox, candidate.bbox) >= 0.24) return true;
+		const distance = pointDistance(track.center, bboxCenter(candidate.bbox));
+		const size = Math.max(
+			track.bbox[2],
+			track.bbox[3],
+			candidate.bbox[2],
+			candidate.bbox[3],
+			1,
+		);
+		return distance / size <= 0.32;
+	}
+	return overlap >= 0.72;
 }
 
 type AssignmentSolution = {
@@ -559,6 +583,15 @@ function intersectionOverUnion(a: BoundingBox, b: BoundingBox) {
 	const areaA = a[2] * a[3];
 	const areaB = b[2] * b[3];
 	return intersection / Math.max(1, areaA + areaB - intersection);
+}
+
+function intersectionOverSmaller(a: BoundingBox, b: BoundingBox) {
+	const left = Math.max(a[0], b[0]);
+	const top = Math.max(a[1], b[1]);
+	const right = Math.min(a[0] + a[2], b[0] + b[2]);
+	const bottom = Math.min(a[1] + a[3], b[1] + b[3]);
+	const intersection = Math.max(0, right - left) * Math.max(0, bottom - top);
+	return intersection / Math.max(1, Math.min(a[2] * a[3], b[2] * b[3]));
 }
 
 function normalizeRegion(region: {
