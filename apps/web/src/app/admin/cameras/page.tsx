@@ -389,7 +389,9 @@ export default function CamerasPage() {
 			void promise.catch((error) => {
 				if (mode === "bar_exit") {
 					setCameraError(
-						error instanceof Error ? error.message : "No se pudo cargar OWLv2.",
+						error instanceof Error
+							? error.message
+							: "No se pudo cargar el detector YOLO.",
 					);
 				}
 			});
@@ -717,14 +719,14 @@ export default function CamerasPage() {
 					configured: true,
 					personCount: 0,
 					confidenceAvg: null,
-					message: "OWLv2 y seguimiento temporal activos.",
+					message: "YOLO y seguimiento temporal activos.",
 				});
 			} catch (error) {
 				setBarModelStatus("error");
 				setCameraError(
 					error instanceof Error
-						? `Falló OWLv2: ${error.message}`
-						: "Falló el detector OWLv2.",
+						? `Fallo YOLO: ${error.message}`
+						: "Fallo el detector YOLO.",
 				);
 			} finally {
 				barModelBusyRef.current = false;
@@ -1113,7 +1115,7 @@ export default function CamerasPage() {
 						</CardTitle>
 						<CardDescription>
 							{mode === "bar_exit"
-								? "Arrastra la línea naranja hasta el punto de salida. Solo se cuentan objetos confirmados por OWLv2 al completar el cruce."
+								? "Arrastra la línea naranja hasta el punto de salida. Solo se cuentan bebidas confirmadas por YOLO al completar el cruce."
 								: "La webcam sirve para demo. Para camara IP usa una URL HTTP/MJPEG o snapshot accesible desde la misma red."}
 						</CardDescription>
 					</CardHeader>
@@ -1921,7 +1923,7 @@ function BarEngineStatus({
 					<div>
 						{modelStatus === "unsupported"
 							? "El navegador no permite ejecutar el modelo local."
-							: "El detector principal fallo; el sistema intentara usar el modo compatible."}
+							: "YOLO no pudo iniciar. Revisa que el modelo y runtime ONNX esten disponibles en /models y /ort."}
 					</div>
 				</div>
 			</div>
@@ -1933,11 +1935,10 @@ function BarEngineStatus({
 			<div className="rounded-xl border border-sky-300 bg-sky-50 p-3 text-sky-950 text-sm dark:bg-sky-950/30 dark:text-sky-100">
 				<div className="flex items-center gap-2 font-medium">
 					<RefreshCwIcon className="h-4 w-4 animate-spin" />
-					Preparando detector ({modelProgress}%)
+					Preparando YOLO ({modelProgress}%)
 				</div>
 				<div className="mt-1 text-xs opacity-80">
-					La descarga cuantizada es de aproximadamente 128 MB y después queda
-					guardada en el navegador.
+					Cargando modelo local para detectar botellas, vasos, copas y latas.
 				</div>
 			</div>
 		);
@@ -2181,10 +2182,10 @@ function barModelStatusLabel(
 		return runtime === "wasm"
 			? "Detector listo (compatible)"
 			: "Detector listo";
-	if (status === "loading") return `Preparando detector ${progress}%`;
+	if (status === "loading") return `Preparando YOLO ${progress}%`;
 	if (status === "unsupported") return "Detector no disponible";
 	if (status === "error") return "Detector con error";
-	return "OWLv2";
+	return "YOLO";
 }
 
 async function openCameraStream() {

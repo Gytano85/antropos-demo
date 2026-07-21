@@ -13,7 +13,11 @@ import { pipeline } from "node:stream/promises";
 import { fileURLToPath } from "node:url";
 
 const appRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
-const ortDist = join(appRoot, "node_modules", "onnxruntime-web", "dist");
+const repoRoot = join(appRoot, "..", "..");
+const ortDistCandidates = [
+	join(appRoot, "node_modules", "onnxruntime-web", "dist"),
+	join(repoRoot, "node_modules", "onnxruntime-web", "dist"),
+];
 const ortPublic = join(appRoot, "public", "ort");
 const modelsPublic = join(appRoot, "public", "models");
 
@@ -39,7 +43,8 @@ async function exists(path) {
 }
 
 async function copyOrtRuntime() {
-	if (!(await exists(ortDist))) {
+	const ortDist = await firstExistingPath(ortDistCandidates);
+	if (!ortDist) {
 		throw new Error(
 			"No se encontro onnxruntime-web en node_modules. Instala dependencias primero.",
 		);
@@ -48,7 +53,16 @@ async function copyOrtRuntime() {
 	for (const file of ORT_FILES) {
 		await copyFile(join(ortDist, file), join(ortPublic, file));
 	}
-	console.log(`✓ Runtime ONNX copiado a public/ort (${ORT_FILES.length} archivos)`);
+	console.log(
+		`✓ Runtime ONNX copiado a public/ort (${ORT_FILES.length} archivos)`,
+	);
+}
+
+async function firstExistingPath(paths) {
+	for (const path of paths) {
+		if (await exists(path)) return path;
+	}
+	return null;
 }
 
 async function downloadBaseModel() {
