@@ -588,7 +588,7 @@ export default function CamerasPage() {
 				barModelStatus !== "ready" ||
 				!barYoloSessionRef.current ||
 				barModelBusyRef.current ||
-				now - lastBarModelAtRef.current < 260
+				now - lastBarModelAtRef.current < 180
 			) {
 				return;
 			}
@@ -635,28 +635,30 @@ export default function CamerasPage() {
 					enabledBarItems.glass ||
 					enabledBarItems.bottle ||
 					enabledBarItems.can;
-				const candidates = baseCandidates
-					.filter((candidate) =>
-						isDrinkItem(candidate.type)
-							? drinksEnabled
-							: enabledBarItems[candidate.type],
-					)
-					.map((candidate) => {
-						const bbox: BoundingBox = [
-							crop.x + candidate.bbox[0] * scaleX,
-							crop.y + candidate.bbox[1] * scaleY,
-							candidate.bbox[2] * scaleX,
-							candidate.bbox[3] * scaleY,
-						];
-						return {
-							...candidate,
-							type: isDrinkItem(candidate.type) ? "glass" : candidate.type,
-							label: isDrinkItem(candidate.type) ? "bebida" : candidate.label,
-							bbox,
-							appearance: colorSignature(canvas, bbox),
-							seenAt: Date.now(),
-						};
-					});
+				const candidates = dedupeBarCandidates(
+					baseCandidates
+						.filter((candidate) =>
+							isDrinkItem(candidate.type)
+								? drinksEnabled
+								: enabledBarItems[candidate.type],
+						)
+						.map((candidate) => {
+							const bbox: BoundingBox = [
+								crop.x + candidate.bbox[0] * scaleX,
+								crop.y + candidate.bbox[1] * scaleY,
+								candidate.bbox[2] * scaleX,
+								candidate.bbox[3] * scaleY,
+							];
+							return {
+								...candidate,
+								type: isDrinkItem(candidate.type) ? "glass" : candidate.type,
+								label: isDrinkItem(candidate.type) ? "bebida" : candidate.label,
+								bbox,
+								appearance: colorSignature(canvas, bbox),
+								seenAt: Date.now(),
+							};
+						}),
+				);
 				const visibleCandidates =
 					candidates.length > 0
 						? candidates
@@ -2324,6 +2326,50 @@ function businessItemLabel(type: BarItemType) {
 	return isDrinkItem(type) ? "Bebida" : itemLabel(type);
 }
 
+type BarCandidateForDisplay = {
+	type: BarItemType;
+	confidence: number;
+	bbox: BoundingBox;
+	label: string;
+	support: number;
+	appearance?: number[];
+	seenAt?: number;
+};
+
+function dedupeBarCandidates<T extends BarCandidateForDisplay>(
+	candidates: T[],
+) {
+	const kept: T[] = [];
+	for (const candidate of candidates.sort(
+		(a, b) => b.confidence - a.confidence,
+	)) {
+		const duplicate = kept.some((current) =>
+			isSameDrinkCandidate(current, candidate),
+		);
+		if (!duplicate) kept.push(candidate);
+	}
+	return kept;
+}
+
+function isSameDrinkCandidate(
+	a: BarCandidateForDisplay,
+	b: BarCandidateForDisplay,
+) {
+	if (!isDrinkItem(a.type) || !isDrinkItem(b.type)) return false;
+	const overlap = boxIntersectionOverSmaller(a.bbox, b.bbox);
+	if (overlap >= 0.2) return true;
+	const distance = Math.hypot(
+		a.bbox[0] + a.bbox[2] / 2 - (b.bbox[0] + b.bbox[2] / 2),
+		a.bbox[1] + a.bbox[3] / 2 - (b.bbox[1] + b.bbox[3] / 2),
+	);
+	const size = Math.max(a.bbox[2], a.bbox[3], b.bbox[2], b.bbox[3], 1);
+	const similarSize =
+		Math.min(a.bbox[2] * a.bbox[3], b.bbox[2] * b.bbox[3]) /
+			Math.max(a.bbox[2] * a.bbox[3], b.bbox[2] * b.bbox[3], 1) >
+		0.42;
+	return similarSize && distance / size <= 0.46;
+}
+
 function mergeVisibleDrinkTracks(tracks: BarTrack[]) {
 	const kept: BarTrack[] = [];
 	for (const track of tracks) {
@@ -2354,7 +2400,10 @@ function areSameDisplayedDrink(a: BarTrack, b: BarTrack) {
 	if (overlap >= 0.22) return true;
 	const distance = Math.hypot(a.center.x - b.center.x, a.center.y - b.center.y);
 	const size = Math.max(a.bbox[2], a.bbox[3], b.bbox[2], b.bbox[3], 1);
-	return distance / size <= 0.62;
+	const areaA = a.bbox[2] * a.bbox[3];
+	const areaB = b.bbox[2] * b.bbox[3];
+	const similarSize = Math.min(areaA, areaB) / Math.max(areaA, areaB, 1) > 0.42;
+	return similarSize && distance / size <= 0.46;
 }
 
 function boxIntersectionOverSmaller(a: BoundingBox, b: BoundingBox) {

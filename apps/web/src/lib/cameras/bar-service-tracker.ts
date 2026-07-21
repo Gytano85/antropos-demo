@@ -223,7 +223,9 @@ export function updateBarTracks(
 		const candidate = candidates[index];
 		if (!candidate) continue;
 		if (
-			nextTracks.some((track) => isDuplicateTrackCandidate(track, candidate))
+			nextTracks.some((track) =>
+				isDuplicateTrackCandidate(track, candidate, settings),
+			)
 		) {
 			continue;
 		}
@@ -374,21 +376,29 @@ function optimalAssignments(
 	return solve(0, 0).pairs;
 }
 
-function isDuplicateTrackCandidate(track: BarTrack, candidate: BarCandidate) {
+function isDuplicateTrackCandidate(
+	track: BarTrack,
+	candidate: BarCandidate,
+	options: TrackingOptions,
+) {
 	if (itemGroup(track.type) !== itemGroup(candidate.type)) return false;
-	const overlap = intersectionOverSmaller(track.bbox, candidate.bbox);
+	const elapsed = Math.max(1, options.now - track.lastSeenAt);
+	const projectedBox = projectBox(track.bbox, track.velocity, elapsed);
+	const projectedCenter = bboxCenter(projectedBox);
+	const overlap = intersectionOverSmaller(projectedBox, candidate.bbox);
 	if (itemGroup(track.type) === "drink") {
-		if (overlap >= 0.3) return true;
-		if (intersectionOverUnion(track.bbox, candidate.bbox) >= 0.16) return true;
-		const distance = pointDistance(track.center, bboxCenter(candidate.bbox));
+		if (overlap >= 0.22) return true;
+		if (intersectionOverUnion(projectedBox, candidate.bbox) >= 0.12)
+			return true;
+		const distance = pointDistance(projectedCenter, bboxCenter(candidate.bbox));
 		const size = Math.max(
-			track.bbox[2],
-			track.bbox[3],
+			projectedBox[2],
+			projectedBox[3],
 			candidate.bbox[2],
 			candidate.bbox[3],
 			1,
 		);
-		return distance / size <= 0.5;
+		return distance / size <= 0.72;
 	}
 	return overlap >= 0.72;
 }
@@ -408,10 +418,7 @@ function matchCost(
 	}
 	const typeSwitchCost = track.type === candidate.type ? 0 : 0.14;
 	const elapsed = Math.max(1, options.now - track.lastSeenAt);
-	const predicted = {
-		x: track.center.x + track.velocity.x * Math.min(elapsed, 1_500),
-		y: track.center.y + track.velocity.y * Math.min(elapsed, 1_500),
-	};
+	const predicted = bboxCenter(projectBox(track.bbox, track.velocity, elapsed));
 	const candidateCenter = bboxCenter(candidate.bbox);
 	const frameDiagonal = Math.hypot(options.frameWidth, options.frameHeight);
 	const objectDiagonal = Math.max(
@@ -419,21 +426,29 @@ function matchCost(
 		bboxDiagonal(candidate.bbox),
 	);
 	const maxDistance = Math.min(
-		frameDiagonal * 0.28,
-		Math.max(frameDiagonal * 0.055, objectDiagonal * 1.7) *
-			(1 + Math.min(track.misses, 3) * 0.22),
+		frameDiagonal * (itemGroup(track.type) === "drink" ? 0.36 : 0.28),
+		Math.max(
+			frameDiagonal * 0.055,
+			objectDiagonal * (itemGroup(track.type) === "drink" ? 2.35 : 1.7),
+		) *
+			(1 + Math.min(track.misses, 4) * 0.28),
 	);
 	const distance = pointDistance(predicted, candidateCenter);
 	if (distance > maxDistance) return Number.POSITIVE_INFINITY;
 
 	const overlap = intersectionOverUnion(track.bbox, candidate.bbox);
-	if (overlap < 0.01 && distance > maxDistance * 0.66) {
-		return Number.POSITIVE_INFINITY;
-	}
 	const appearanceCost = appearanceDistance(
 		track.appearance,
 		candidate.appearance,
 	);
+	if (
+		overlap < 0.01 &&
+		distance >
+			maxDistance * (itemGroup(track.type) === "drink" ? 0.86 : 0.66) &&
+		appearanceCost > 0.42
+	) {
+		return Number.POSITIVE_INFINITY;
+	}
 	return (
 		(distance / Math.max(1, maxDistance)) * 0.42 +
 		(1 - overlap) * 0.24 +
@@ -441,6 +456,20 @@ function matchCost(
 		appearanceCost * 0.18 +
 		typeSwitchCost
 	);
+}
+
+function projectBox(
+	bbox: BoundingBox,
+	velocity: Point,
+	elapsedMs: number,
+): BoundingBox {
+	const elapsed = Math.min(elapsedMs, 1_200);
+	return [
+		bbox[0] + velocity.x * elapsed,
+		bbox[1] + velocity.y * elapsed,
+		bbox[2],
+		bbox[3],
+	];
 }
 
 function stableSide(
