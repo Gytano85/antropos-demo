@@ -152,14 +152,11 @@ export default function CamerasPage() {
 	const [barEvents, setBarEvents] = useState<BarExitEvent[]>([]);
 	const [barDetectionCount, setBarDetectionCount] = useState(0);
 	const [barRawDetectionCount, setBarRawDetectionCount] = useState(0);
-	const [barRawModelLabels, setBarRawModelLabels] = useState<string[]>([]);
 	const [barInferenceMs, setBarInferenceMs] = useState<number | null>(null);
 	const [barModelStatus, setBarModelStatus] = useState<BarModelStatus>("idle");
 	const [barModelProgress, setBarModelProgress] = useState(0);
 	const [barModelRuntime, setBarModelRuntime] =
 		useState<BarModelRuntime | null>(null);
-	const [barModelDefinition, setBarModelDefinition] =
-		useState<BarModelDefinition | null>(null);
 	const lastBarModelAtRef = useRef(0);
 	const barSessionIdRef = useRef(createVisionSessionId());
 	const loadedBarConfigForRef = useRef<number | null>(null);
@@ -343,7 +340,6 @@ export default function CamerasPage() {
 				});
 				barYoloSessionRef.current = session;
 				barModelDefinitionRef.current = definition;
-				setBarModelDefinition(definition);
 				setBarModelProgress(100);
 				setBarModelStatus("ready");
 				return session;
@@ -377,7 +373,6 @@ export default function CamerasPage() {
 		setBarCandidates([]);
 		setBarDetectionCount(0);
 		setBarRawDetectionCount(0);
-		setBarRawModelLabels([]);
 		setBarInferenceMs(null);
 	}, []);
 
@@ -475,7 +470,7 @@ export default function CamerasPage() {
 			canvas: HTMLCanvasElement,
 			people: DetectedObject[],
 			tracks: BarTrack[] = [],
-			candidates: Array<{
+			_candidates: Array<{
 				type: BarItemType;
 				confidence: number;
 				bbox: BoundingBox;
@@ -535,24 +530,9 @@ export default function CamerasPage() {
 				);
 				context.lineWidth = Math.max(3, Math.round(canvas.width / 320));
 
-				for (const candidate of candidates) {
-					const [x, y, width, height] = candidate.bbox;
-					context.strokeStyle = "rgba(56, 189, 248, 0.72)";
-					context.fillStyle = "rgba(2, 6, 23, 0.74)";
-					context.setLineDash([6, 6]);
-					context.strokeRect(x, y, width, height);
-					context.setLineDash([]);
-					const label = `detectando ${businessItemLabel(candidate.type)} ${Math.round(
-						candidate.confidence * 100,
-					)}%`;
-					const labelWidth = context.measureText(label).width + 12;
-					const labelY = Math.max(0, y - 26);
-					context.fillRect(x, labelY, labelWidth, 24);
-					context.fillStyle = "#fff";
-					context.fillText(label, x + 6, labelY + 17);
-				}
-
-				for (const track of tracks.filter(isVisibleBarTrack)) {
+				for (const track of mergeVisibleDrinkTracks(
+					tracks.filter(isVisibleBarTrack),
+				)) {
 					const [x, y, width, height] = track.bbox;
 					context.strokeStyle = track.counted ? "#22c55e" : "#38bdf8";
 					context.fillStyle = "rgba(0,0,0,0.72)";
@@ -650,12 +630,17 @@ export default function CamerasPage() {
 					modelCanvas,
 					modelFrame,
 				);
-				const rawModelLabels = raw
-					.slice(0, 5)
-					.map((item) => `${item.class} ${Math.round(item.score * 100)}%`);
 				const baseCandidates = candidatesFromCocoDetections(raw, modelFrame);
+				const drinksEnabled =
+					enabledBarItems.glass ||
+					enabledBarItems.bottle ||
+					enabledBarItems.can;
 				const candidates = baseCandidates
-					.filter((candidate) => enabledBarItems[candidate.type])
+					.filter((candidate) =>
+						isDrinkItem(candidate.type)
+							? drinksEnabled
+							: enabledBarItems[candidate.type],
+					)
 					.map((candidate) => {
 						const bbox: BoundingBox = [
 							crop.x + candidate.bbox[0] * scaleX,
@@ -665,6 +650,8 @@ export default function CamerasPage() {
 						];
 						return {
 							...candidate,
+							type: isDrinkItem(candidate.type) ? "glass" : candidate.type,
+							label: isDrinkItem(candidate.type) ? "bebida" : candidate.label,
 							bbox,
 							appearance: colorSignature(canvas, bbox),
 							seenAt: Date.now(),
@@ -679,7 +666,6 @@ export default function CamerasPage() {
 				barCandidatesRef.current = visibleCandidates;
 				setBarCandidates(visibleCandidates);
 				setBarRawDetectionCount(candidates.length);
-				setBarRawModelLabels(rawModelLabels);
 				const tracked = updateBarTracks(barTracksRef.current, candidates, {
 					now: Date.now(),
 					line: lineToCanvas(countingLine, canvas),
@@ -697,7 +683,10 @@ export default function CamerasPage() {
 				});
 				barTracksRef.current = tracked.tracks;
 				setBarTracks(tracked.tracks);
-				setBarDetectionCount(tracked.tracks.filter(isVisibleBarTrack).length);
+				setBarDetectionCount(
+					mergeVisibleDrinkTracks(tracked.tracks.filter(isVisibleBarTrack))
+						.length,
+				);
 				if (tracked.events.length > 0) {
 					setBarEvents((current) =>
 						[...tracked.events, ...current].slice(0, 20),
@@ -942,8 +931,8 @@ export default function CamerasPage() {
 	const confirmedBarTracks = barTracks.filter(isVisibleBarTrack);
 	const sessionDrinkCount = drinkTotal(sessionExitSummary);
 	const savedDrinkCount = drinkTotal(savedExitSummary);
-	const visibleDrinkTracks = confirmedBarTracks.filter((track) =>
-		isDrinkItem(track.type),
+	const visibleDrinkTracks = mergeVisibleDrinkTracks(
+		confirmedBarTracks.filter((track) => isDrinkItem(track.type)),
 	).length;
 	const visibleDrinkCandidates = barCandidates.filter((candidate) =>
 		isDrinkItem(candidate.type),
@@ -1207,16 +1196,12 @@ export default function CamerasPage() {
 								setEnabledBarItems={setEnabledBarItems}
 								barDetectionCount={barDetectionCount}
 								barRawDetectionCount={barRawDetectionCount}
-								barRawModelLabels={barRawModelLabels}
 								barTracks={confirmedBarTracks}
 								visibleDrinkTracks={visibleDrinkTracks}
 								visibleDrinkCandidates={visibleDrinkCandidates}
 								modelStatus={barModelStatus}
 								modelRuntime={barModelRuntime}
-								modelDefinition={barModelDefinition}
 								inferenceMs={barInferenceMs}
-								sessionExitSummary={sessionExitSummary}
-								savedExitSummary={savedExitSummary}
 								sessionExitCount={sessionExitCount}
 								savedExitCount={savedExitCount}
 								sessionDrinkCount={sessionDrinkCount}
@@ -1594,16 +1579,12 @@ function BarExitPanel({
 	setEnabledBarItems,
 	barDetectionCount,
 	barRawDetectionCount,
-	barRawModelLabels,
 	barTracks,
 	visibleDrinkTracks,
 	visibleDrinkCandidates,
 	modelStatus,
 	modelRuntime,
-	modelDefinition,
 	inferenceMs,
-	sessionExitSummary,
-	savedExitSummary,
 	sessionExitCount,
 	savedExitCount,
 	sessionDrinkCount,
@@ -1619,16 +1600,12 @@ function BarExitPanel({
 	>;
 	barDetectionCount: number;
 	barRawDetectionCount: number;
-	barRawModelLabels: string[];
 	barTracks: BarTrack[];
 	visibleDrinkTracks: number;
 	visibleDrinkCandidates: number;
 	modelStatus: BarModelStatus;
 	modelRuntime: BarModelRuntime | null;
-	modelDefinition: BarModelDefinition | null;
 	inferenceMs: number | null;
-	sessionExitSummary: Record<BarItemType, number>;
-	savedExitSummary: Record<BarItemType, number>;
 	sessionExitCount: number;
 	savedExitCount: number;
 	sessionDrinkCount: number;
@@ -1653,8 +1630,6 @@ function BarExitPanel({
 			can: !drinksEnabled,
 		}));
 	const visibleDrinks = visibleDrinkTracks || visibleDrinkCandidates;
-	const modelLabel = modelDefinition?.label ?? "Modelo local";
-
 	return (
 		<div className="rounded-2xl border bg-background p-4 text-sm shadow-sm">
 			<div className="mb-4 flex flex-col gap-3 rounded-xl border bg-muted/30 p-3 sm:flex-row sm:items-center sm:justify-between">
@@ -1693,6 +1668,27 @@ function BarExitPanel({
 				</Button>
 			</div>
 
+			<div className="mb-5 grid gap-3 md:grid-cols-3">
+				<div className="rounded-2xl border bg-primary/10 p-4">
+					<div className="font-bold text-3xl">{sessionDrinkCount}</div>
+					<div className="mt-1 text-muted-foreground text-xs">
+						bebidas contadas en esta sesión
+					</div>
+				</div>
+				<div className="rounded-2xl border bg-muted/30 p-4">
+					<div className="font-bold text-3xl">{visibleDrinks}</div>
+					<div className="mt-1 text-muted-foreground text-xs">
+						bebidas visibles ahora
+					</div>
+				</div>
+				<div className="rounded-2xl border bg-muted/30 p-4">
+					<div className="font-bold text-3xl">{savedDrinkCount}</div>
+					<div className="mt-1 text-muted-foreground text-xs">
+						bebidas guardadas hoy
+					</div>
+				</div>
+			</div>
+
 			<div className="grid gap-5 xl:grid-cols-[1fr_0.9fr]">
 				<div>
 					<div className="font-semibold text-base">Qué debe contar</div>
@@ -1700,25 +1696,7 @@ function BarExitPanel({
 						Las propuestas débiles se descartan y un objeto necesita varias
 						lecturas coherentes antes de aparecer.
 					</div>
-					{modelDefinition ? (
-						<div className="mt-2 rounded-lg border bg-background px-3 py-2 text-xs">
-							<span className="font-medium">
-								Modelo: {modelDefinition.label}
-							</span>
-							{modelDefinition.id === "coco" ? (
-								<span className="ml-1 text-amber-600 dark:text-amber-400">
-									— genérico, no distingue latas. Copia beverage-containers.onnx
-									en /public/models para mejorarlo.
-								</span>
-							) : null}
-						</div>
-					) : null}
-					{barRawModelLabels.length > 0 ? (
-						<div className="mt-2 rounded-lg border bg-background px-3 py-2 text-muted-foreground text-xs">
-							Último modelo: {barRawModelLabels.join(", ")}
-						</div>
-					) : null}
-					<div className="mt-3 grid grid-cols-2 gap-2">
+					<div className="mt-3 grid grid-cols-1 gap-2">
 						<Button
 							type="button"
 							size="sm"
@@ -1726,19 +1704,6 @@ function BarExitPanel({
 							onClick={toggleDrinks}
 						>
 							Bebidas
-						</Button>
-						<Button
-							type="button"
-							size="sm"
-							variant={enabledBarItems.plate ? "default" : "outline"}
-							onClick={() =>
-								setEnabledBarItems((current) => ({
-									...current,
-									plate: !current.plate,
-								}))
-							}
-						>
-							Platos
 						</Button>
 					</div>
 
@@ -1781,14 +1746,9 @@ function BarExitPanel({
 					<SmallStat label="cruces sesión" value={sessionExitCount} />
 					<SmallStat label="bebidas hoy" value={savedDrinkCount} />
 					<SmallStat label="cruces hoy" value={savedExitCount} />
-					<SmallStat label="platos sesión" value={sessionExitSummary.plate} />
-					<SmallStat label="platos hoy" value={savedExitSummary.plate} />
 					<div className="col-span-2 rounded-xl border bg-background px-3 py-2 text-left">
-						<div className="font-medium">{modelLabel}</div>
 						<div className="mt-1 text-muted-foreground">
-							{barRawModelLabels.length > 0
-								? barRawModelLabels.join(", ")
-								: "Sin lectura reciente del modelo."}
+							Conteo consolidado por bebida.
 						</div>
 					</div>
 					<Button
@@ -2338,6 +2298,50 @@ function isDrinkItem(type: BarItemType) {
 
 function businessItemLabel(type: BarItemType) {
 	return isDrinkItem(type) ? "Bebida" : itemLabel(type);
+}
+
+function mergeVisibleDrinkTracks(tracks: BarTrack[]) {
+	const kept: BarTrack[] = [];
+	for (const track of tracks) {
+		if (!isDrinkItem(track.type)) {
+			kept.push(track);
+			continue;
+		}
+		const duplicateIndex = kept.findIndex(
+			(current) =>
+				isDrinkItem(current.type) && areSameDisplayedDrink(current, track),
+		);
+		if (duplicateIndex === -1) {
+			kept.push(track);
+			continue;
+		}
+		const current = kept[duplicateIndex];
+		if (!current || track.confidence <= current.confidence) continue;
+		kept[duplicateIndex] = {
+			...track,
+			counted: current.counted || track.counted,
+		};
+	}
+	return kept;
+}
+
+function areSameDisplayedDrink(a: BarTrack, b: BarTrack) {
+	const overlap = boxIntersectionOverSmaller(a.bbox, b.bbox);
+	if (overlap >= 0.22) return true;
+	const distance = Math.hypot(a.center.x - b.center.x, a.center.y - b.center.y);
+	const size = Math.max(a.bbox[2], a.bbox[3], b.bbox[2], b.bbox[3], 1);
+	return distance / size <= 0.62;
+}
+
+function boxIntersectionOverSmaller(a: BoundingBox, b: BoundingBox) {
+	const left = Math.max(a[0], b[0]);
+	const top = Math.max(a[1], b[1]);
+	const right = Math.min(a[0] + a[2], b[0] + b[2]);
+	const bottom = Math.min(a[1] + a[3], b[1] + b[3]);
+	const intersection = Math.max(0, right - left) * Math.max(0, bottom - top);
+	const areaA = Math.max(0, a[2]) * Math.max(0, a[3]);
+	const areaB = Math.max(0, b[2]) * Math.max(0, b[3]);
+	return intersection / Math.max(1, Math.min(areaA, areaB));
 }
 
 function eventType(event: ExitEventRow): BarItemType {
