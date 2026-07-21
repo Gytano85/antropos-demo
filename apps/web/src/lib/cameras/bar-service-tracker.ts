@@ -185,7 +185,7 @@ export function updateBarTracks(
 		);
 		const crossed =
 			!updated.counted &&
-			updated.state === "confirmed" &&
+			canCountTrack(updated) &&
 			updated.originSide !== 0 &&
 			currentSide !== 0 &&
 			updated.originSide !== currentSide &&
@@ -222,6 +222,17 @@ export function updateBarTracks(
 		if (candidatesUsed.has(index)) continue;
 		const candidate = candidates[index];
 		if (!candidate) continue;
+		const rescued = rescueCrossedTrack(
+			nextTracks,
+			candidate,
+			settings,
+			lineTolerance,
+		);
+		if (rescued) {
+			nextTracks[rescued.trackIndex] = rescued.track;
+			events.push(rescued.event);
+			continue;
+		}
 		if (
 			nextTracks.some((track) =>
 				isDuplicateTrackCandidate(track, candidate, settings),
@@ -258,6 +269,131 @@ export function updateBarTracks(
 	}
 
 	return { tracks: nextTracks, events };
+}
+
+function canCountTrack(track: BarTrack) {
+	if (track.state === "confirmed") return true;
+	return (
+		itemGroup(track.type) === "drink" &&
+		track.hits >= 2 &&
+		track.confidence >= 0.2
+	);
+}
+
+function rescueCrossedTrack(
+	tracks: BarTrack[],
+	candidate: BarCandidate,
+	options: Required<typeof DEFAULTS> & TrackingOptions,
+	lineTolerance: number,
+): { trackIndex: number; track: BarTrack; event: BarExitEvent } | null {
+	const candidateCenter = bboxCenter(candidate.bbox);
+	const candidateSide = stableSide(
+		candidateCenter,
+		options.line,
+		lineTolerance,
+	);
+	if (candidateSide === 0) return null;
+	const minimumTravel =
+		options.minTravelDistance ?? Math.max(24, options.frameWidth * 0.035);
+	let best: {
+		trackIndex: number;
+		track: BarTrack;
+		score: number;
+	} | null = null;
+	for (let trackIndex = 0; trackIndex < tracks.length; trackIndex += 1) {
+		const track = tracks[trackIndex];
+		if (!track || track.counted) continue;
+		if (itemGroup(track.type) !== itemGroup(candidate.type)) continue;
+		if (itemGroup(track.type) !== "drink") continue;
+		const trackSide =
+			track.lastSide !== 0
+				? track.lastSide
+				: stableSide(track.center, options.line, lineTolerance);
+		if (trackSide === 0 || trackSide === candidateSide) continue;
+		const directionalTravel = movementInDirection(
+			track.firstCenter,
+			candidateCenter,
+			options.direction,
+		);
+		const stepTravel = movementInDirection(
+			track.center,
+			candidateCenter,
+			options.direction,
+		);
+		if (directionalTravel < minimumTravel || stepTravel <= 0) continue;
+		if (
+			!crossesFiniteLine(
+				track.center,
+				candidateCenter,
+				options.line,
+				options.gatePadding,
+			)
+		) {
+			continue;
+		}
+		const elapsed = Math.max(1, options.now - track.lastSeenAt);
+		const distance = pointDistance(track.center, candidateCenter);
+		const maxDistance = Math.max(
+			options.frameWidth * 0.18,
+			bboxDiagonal(track.bbox) * 3.2,
+		);
+		if (distance > maxDistance) continue;
+		const score =
+			distance / Math.max(1, maxDistance) +
+			appearanceDistance(track.appearance, candidate.appearance) * 0.35;
+		const center = candidateCenter;
+		const rescuedTrack: BarTrack = {
+			...track,
+			label: candidate.label,
+			confidence: smooth(track.confidence, candidate.confidence, 0.45),
+			support: Math.max(track.support, candidate.support),
+			bbox: candidate.bbox,
+			previousCenter: track.center,
+			center,
+			velocity: {
+				x: smooth(
+					track.velocity.x,
+					(center.x - track.center.x) / elapsed,
+					0.54,
+				),
+				y: smooth(
+					track.velocity.y,
+					(center.y - track.center.y) / elapsed,
+					0.54,
+				),
+			},
+			appearance: blendAppearance(track.appearance, candidate.appearance),
+			lastSeenAt: options.now,
+			hits: track.hits + 1,
+			consecutiveHits: track.consecutiveHits + 1,
+			misses: 0,
+			state: "confirmed",
+			counted: true,
+			lastSide: candidateSide,
+			lastStableCenter: center,
+			travelDistance: track.travelDistance + distance,
+		};
+		if (!best || score < best.score) {
+			best = { trackIndex, track: rescuedTrack, score };
+		}
+	}
+	if (!best) return null;
+	return {
+		trackIndex: best.trackIndex,
+		track: best.track,
+		event: {
+			trackId: best.track.id,
+			type: best.track.type,
+			confidence: best.track.confidence,
+			direction: options.direction,
+			time: options.now,
+			crossingPoint: lineIntersection(
+				best.track.previousCenter ?? best.track.firstCenter,
+				best.track.center,
+				options.line,
+			),
+		},
+	};
 }
 
 export function defaultCountingLine(): CountingLine {

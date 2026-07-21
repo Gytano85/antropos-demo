@@ -131,6 +131,24 @@ describe("bar service tracker", () => {
 		expect(tracks).toHaveLength(1);
 	});
 
+	it("counts a fast drink crossing before full confirmation", () => {
+		let tracks: BarTrack[] = [];
+		const events = [];
+		for (const [index, x] of [440, 575].entries()) {
+			const result = updateBarTracks(
+				tracks,
+				[drinkCandidate(x, 300, "glass")],
+				{ ...options, now: index * 120 },
+			);
+			tracks = result.tracks;
+			events.push(...result.events);
+		}
+
+		expect(events).toHaveLength(1);
+		expect(events[0]?.type).toBe("glass");
+		expect(tracks[0]?.counted).toBe(true);
+	});
+
 	it("keeps a plate and a drink on separate tracks", () => {
 		const result = updateBarTracks(
 			[],

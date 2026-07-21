@@ -2154,11 +2154,18 @@ function isReliablePersonPrediction(
 }
 
 function isVisibleBarTrack(track: BarTrack) {
-	return track.state === "confirmed" && track.misses <= 8;
+	const age = Date.now() - track.lastSeenAt;
+	return track.state === "confirmed" && track.misses <= 8 && age <= 900;
 }
 
 function isDrawableBarTrack(track: BarTrack) {
-	return track.misses <= 8 && (track.state === "confirmed" || track.hits >= 1);
+	const age = Date.now() - track.lastSeenAt;
+	if (track.counted) return age <= 420;
+	return (
+		track.misses <= 8 &&
+		age <= 760 &&
+		(track.state === "confirmed" || track.hits >= 1)
+	);
 }
 
 function projectTrackForDisplay(track: BarTrack): BarTrack {
@@ -2195,7 +2202,7 @@ function markVisualCrossings(
 		if (
 			track.counted ||
 			!isDrinkItem(track.type) ||
-			track.state !== "confirmed" ||
+			!canVisualCountTrack(track) ||
 			!track.previousCenter
 		) {
 			return track;
@@ -2262,6 +2269,12 @@ function markVisualCrossings(
 		return countedTrack;
 	});
 	return { tracks: changed ? nextTracks : tracks, events };
+}
+
+function canVisualCountTrack(track: BarTrack) {
+	return (
+		track.state === "confirmed" || (track.hits >= 1 && track.confidence >= 0.2)
+	);
 }
 
 function refineTracksWithVisualTemplates(
