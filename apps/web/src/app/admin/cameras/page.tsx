@@ -531,7 +531,7 @@ export default function CamerasPage() {
 				context.lineWidth = Math.max(3, Math.round(canvas.width / 320));
 
 				for (const track of mergeVisibleDrinkTracks(
-					tracks.filter(isVisibleBarTrack),
+					tracks.filter(isDrawableBarTrack).map(projectTrackForDisplay),
 				)) {
 					const [x, y, width, height] = track.bbox;
 					context.strokeStyle = track.counted ? "#22c55e" : "#38bdf8";
@@ -588,7 +588,7 @@ export default function CamerasPage() {
 				barModelStatus !== "ready" ||
 				!barYoloSessionRef.current ||
 				barModelBusyRef.current ||
-				now - lastBarModelAtRef.current < 500
+				now - lastBarModelAtRef.current < 260
 			) {
 				return;
 			}
@@ -602,7 +602,7 @@ export default function CamerasPage() {
 				}
 				const modelCanvas = barModelCanvasRef.current;
 				const crop = { x: 0, y: 0, width: canvas.width, height: canvas.height };
-				modelCanvas.width = Math.max(480, Math.min(960, crop.width));
+				modelCanvas.width = Math.max(416, Math.min(736, crop.width));
 				modelCanvas.height = Math.max(
 					240,
 					Math.round((crop.height / crop.width) * modelCanvas.width),
@@ -672,8 +672,8 @@ export default function CamerasPage() {
 					direction: countingDirection,
 					frameWidth: canvas.width,
 					frameHeight: canvas.height,
-					minHits: 2,
-					minConfirmMs: 300,
+					minHits: 1,
+					minConfirmMs: 120,
 					maxMisses: 10,
 					maxLostMs: 4_500,
 					lineTolerance: Math.max(7, canvas.width * 0.009),
@@ -2102,6 +2102,30 @@ function isReliablePersonPrediction(
 
 function isVisibleBarTrack(track: BarTrack) {
 	return track.state === "confirmed" && track.misses <= 8;
+}
+
+function isDrawableBarTrack(track: BarTrack) {
+	return track.misses <= 8 && (track.state === "confirmed" || track.hits >= 1);
+}
+
+function projectTrackForDisplay(track: BarTrack): BarTrack {
+	const elapsed = Math.min(260, Math.max(0, Date.now() - track.lastSeenAt));
+	const dx = track.velocity.x * elapsed;
+	const dy = track.velocity.y * elapsed;
+	if (Math.abs(dx) + Math.abs(dy) < 0.5) return track;
+	return {
+		...track,
+		bbox: [
+			track.bbox[0] + dx,
+			track.bbox[1] + dy,
+			track.bbox[2],
+			track.bbox[3],
+		],
+		center: {
+			x: track.center.x + dx,
+			y: track.center.y + dy,
+		},
+	};
 }
 
 function lineToCanvas(
