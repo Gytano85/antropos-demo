@@ -11,6 +11,19 @@ export function itemGroup(type: BarItemType): BarItemGroup {
 	return type === "plate" ? "food" : "drink";
 }
 
+/**
+ * Velocidad de un track que se mantiene solo por emparejamiento visual.
+ *
+ * Nunca puede crecer: la busqueda de plantilla se centra en la posicion
+ * extrapolada con esta velocidad, asi que medirla de vuelta desde el resultado
+ * la realimentaba y el track se aceleraba solo hasta salirse del encuadre.
+ * Al amortiguarla, un objeto que el modelo deja de confirmar se detiene.
+ */
+export function dampVisualVelocity(velocity: Point, damping: number): Point {
+	const factor = Math.min(1, Math.max(0, damping));
+	return { x: velocity.x * factor, y: velocity.y * factor };
+}
+
 export type CountingDirection =
 	| "left_to_right"
 	| "right_to_left"

@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import {
 	type BarCandidate,
 	type BarTrack,
+	dampVisualVelocity,
 	mergeDuplicateTracks,
 	updateBarTracks,
 } from "../../../cameras/bar-service-tracker";
@@ -291,3 +292,32 @@ function buildTrack(overrides: Partial<BarTrack> & { id: string }): BarTrack {
 		bbox,
 	};
 }
+
+describe("visual-only track velocity", () => {
+	it("never lets a visually tracked object speed itself up", () => {
+		// Reproduce la fuga: la busqueda se centra en la posicion extrapolada, y
+		// si la velocidad se midiera desde ese resultado creceria en cada pasada.
+		let velocity = { x: 0.6, y: -0.2 };
+		let previousSpeed = Math.hypot(velocity.x, velocity.y);
+
+		for (let pass = 0; pass < 25; pass += 1) {
+			velocity = dampVisualVelocity(velocity, 0.72);
+			const speed = Math.hypot(velocity.x, velocity.y);
+			expect(speed).toBeLessThanOrEqual(previousSpeed);
+			previousSpeed = speed;
+		}
+
+		// Sin detecciones del modelo el track termina frenando, no volando.
+		expect(previousSpeed).toBeLessThan(0.01);
+	});
+
+	it("keeps direction while damping", () => {
+		const damped = dampVisualVelocity({ x: 1, y: -2 }, 0.5);
+		expect(damped).toEqual({ x: 0.5, y: -1 });
+	});
+
+	it("clamps a damping factor outside 0..1", () => {
+		expect(dampVisualVelocity({ x: 2, y: 2 }, 5)).toEqual({ x: 2, y: 2 });
+		expect(dampVisualVelocity({ x: 2, y: 2 }, -1)).toEqual({ x: 0, y: 0 });
+	});
+});

@@ -53,6 +53,7 @@ import {
 	type BoundingBox,
 	type CountingDirection,
 	type CountingLine,
+	dampVisualVelocity,
 	defaultCountingLine,
 	itemLabel,
 	normalizeLine,
@@ -90,7 +91,16 @@ type DetectionResult = {
 type CameraMode = "presence" | "bar_exit";
 
 /** Cadencia del emparejamiento visual, independiente del dibujo. */
-const VISUAL_TRACKING_INTERVAL_MS = 70;
+const VISUAL_TRACKING_INTERVAL_MS = 90;
+
+/**
+ * Cuanta velocidad conserva un track que solo se sigue visualmente. Al ser
+ * menor que 1 la extrapolacion se apaga sola si el modelo deja de confirmarlo.
+ */
+const VISUAL_VELOCITY_DAMPING = 0.72;
+
+/** Tope de extrapolacion por velocidad al centrar la busqueda de plantilla. */
+const VISUAL_PREDICTION_CAP_MS = 140;
 type BarModelStatus = "idle" | "loading" | "ready" | "unsupported" | "error";
 type BarModelRuntime = "webgpu" | "wasm";
 type VisualTrackTemplate = {
@@ -2428,25 +2438,19 @@ function refineTracksWithVisualTemplates(
 			x: match.bbox[0] + match.bbox[2] / 2,
 			y: match.bbox[1] + match.bbox[3] / 2,
 		};
-		const elapsed = Math.max(1, now - track.lastSeenAt);
 		changed = true;
 		return {
 			...track,
 			bbox: match.bbox,
 			previousCenter,
 			center,
-			velocity: {
-				x: smoothNumber(
-					track.velocity.x,
-					(center.x - previousCenter.x) / elapsed,
-					0.34,
-				),
-				y: smoothNumber(
-					track.velocity.y,
-					(center.y - previousCenter.y) / elapsed,
-					0.34,
-				),
-			},
+			// La velocidad NO se recalcula aqui a proposito. La busqueda se centra
+			// en la posicion extrapolada con esta misma velocidad, asi que medirla
+			// desde el resultado la realimentaba: el track se aceleraba solo en la
+			// direccion del movimiento hasta escaparse del encuadre. La velocidad
+			// solo se mide contra detecciones reales del modelo; entre una y otra
+			// se amortigua para que un track sin deteccion frene en vez de volar.
+			velocity: dampVisualVelocity(track.velocity, VISUAL_VELOCITY_DAMPING),
 			lastSeenAt: now,
 			misses: Math.max(0, track.misses - 1),
 		};
@@ -2508,7 +2512,12 @@ function findVisualTemplateMatch(
 	template: VisualTrackTemplate,
 	now: number,
 ) {
-	const elapsed = Math.min(320, Math.max(0, now - track.lastSeenAt));
+	// El tope evita que un track sin detecciones recientes proyecte la busqueda
+	// tan lejos que enganche con el fondo en vez de con el objeto.
+	const elapsed = Math.min(
+		VISUAL_PREDICTION_CAP_MS,
+		Math.max(0, now - track.lastSeenAt),
+	);
 	const predicted: BoundingBox = [
 		track.bbox[0] + track.velocity.x * elapsed,
 		track.bbox[1] + track.velocity.y * elapsed,
@@ -2585,10 +2594,6 @@ function clampBox(
 	const y = Math.max(0, Math.min(frameHeight - height, bbox[1]));
 	if (![x, y, width, height].every(Number.isFinite)) return null;
 	return [x, y, width, height];
-}
-
-function smoothNumber(current: number, next: number, alpha: number) {
-	return current * (1 - alpha) + next * alpha;
 }
 
 function visualStableSide(
