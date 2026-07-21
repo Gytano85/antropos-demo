@@ -66,9 +66,9 @@ import {
 	type PresenceState,
 } from "@/lib/cameras/presence-engine";
 import {
-	createYoloSession,
-	type YoloSession,
-} from "@/lib/cameras/yolo-onnx-runtime";
+	createBarDetector,
+	type YoloClient,
+} from "@/lib/cameras/yolo-onnx-client";
 import { useTRPC } from "@/lib/trpc/client";
 
 type DetectionResult = {
@@ -88,6 +88,9 @@ type DetectionResult = {
 };
 
 type CameraMode = "presence" | "bar_exit";
+
+/** Cadencia del emparejamiento visual, independiente del dibujo. */
+const VISUAL_TRACKING_INTERVAL_MS = 70;
 type BarModelStatus = "idle" | "loading" | "ready" | "unsupported" | "error";
 type BarModelRuntime = "webgpu" | "wasm";
 type VisualTrackTemplate = {
@@ -105,10 +108,9 @@ export default function CamerasPage() {
 	const ipImageRef = useRef<HTMLImageElement | null>(null);
 	const canvasRef = useRef<HTMLCanvasElement | null>(null);
 	const overlayCanvasRef = useRef<HTMLCanvasElement | null>(null);
-	const barModelCanvasRef = useRef<HTMLCanvasElement | null>(null);
 	const barModelBusyRef = useRef(false);
-	const barYoloSessionRef = useRef<YoloSession | null>(null);
-	const barYoloSessionPromiseRef = useRef<Promise<YoloSession> | null>(null);
+	const barYoloSessionRef = useRef<YoloClient | null>(null);
+	const barYoloSessionPromiseRef = useRef<Promise<YoloClient> | null>(null);
 	const barModelDefinitionRef = useRef<BarModelDefinition | null>(null);
 	const barModelRuntimeRef = useRef<BarModelRuntime | null>(null);
 	const gateDraggingRef = useRef(false);
@@ -168,6 +170,7 @@ export default function CamerasPage() {
 	const [barModelRuntime, setBarModelRuntime] =
 		useState<BarModelRuntime | null>(null);
 	const lastBarModelAtRef = useRef(0);
+	const lastVisualAtRef = useRef(0);
 	const barSessionIdRef = useRef(createVisionSessionId());
 	const loadedBarConfigForRef = useRef<number | null>(null);
 	const [enabledBarItems, setEnabledBarItems] = useState<
@@ -361,7 +364,7 @@ export default function CamerasPage() {
 			barYoloSessionPromiseRef.current = (async () => {
 				const definition = await resolveAvailableBarModel();
 				setBarModelProgress(35);
-				const session = await createYoloSession(definition, (backend) => {
+				const session = await createBarDetector(definition, (backend) => {
 					barModelRuntimeRef.current = backend;
 					setBarModelRuntime(backend);
 				});
@@ -619,44 +622,51 @@ export default function CamerasPage() {
 		async (canvas: HTMLCanvasElement) => {
 			if (!selected) return;
 			const now = Date.now();
-			let visuallyTracked = refineTracksWithVisualTemplates(
-				canvas,
-				barTracksRef.current,
-				barVisualTemplatesRef.current,
-				now,
-			);
-			const visualCrossing = markVisualCrossings(
-				visuallyTracked,
-				lineToCanvas(countingLine, canvas),
-				countingDirection,
-				Math.max(14, countingBandPx * 0.46),
-				Math.max(12, countingBandPx * 0.75),
-				now,
-			);
-			visuallyTracked = visualCrossing.tracks;
-			if (
-				visuallyTracked !== barTracksRef.current ||
-				visualCrossing.events.length > 0
-			) {
-				barTracksRef.current = visuallyTracked;
-				setBarTracks(visuallyTracked);
-				setBarDetectionCount(
-					mergeVisibleDrinkTracks(visuallyTracked.filter(isVisibleBarTrack))
-						.length,
+			// El emparejamiento visual compara plantillas de pixeles y es caro:
+			// conserva su propia cadencia mientras el dibujo corre en cada frame,
+			// que es lo que hace que se vea fluido.
+			let visuallyTracked = barTracksRef.current;
+			if (now - lastVisualAtRef.current >= VISUAL_TRACKING_INTERVAL_MS) {
+				lastVisualAtRef.current = now;
+				visuallyTracked = refineTracksWithVisualTemplates(
+					canvas,
+					barTracksRef.current,
+					barVisualTemplatesRef.current,
+					now,
 				);
-				if (visualCrossing.events.length > 0) {
-					setBarEvents((current) =>
-						[...visualCrossing.events, ...current].slice(0, 20),
+				const visualCrossing = markVisualCrossings(
+					visuallyTracked,
+					lineToCanvas(countingLine, canvas),
+					countingDirection,
+					Math.max(14, countingBandPx * 0.46),
+					Math.max(12, countingBandPx * 0.75),
+					now,
+				);
+				visuallyTracked = visualCrossing.tracks;
+				if (
+					visuallyTracked !== barTracksRef.current ||
+					visualCrossing.events.length > 0
+				) {
+					barTracksRef.current = visuallyTracked;
+					setBarTracks(visuallyTracked);
+					setBarDetectionCount(
+						mergeVisibleDrinkTracks(visuallyTracked.filter(isVisibleBarTrack))
+							.length,
 					);
-					for (const event of visualCrossing.events) {
-						mutateBarExit({
-							cameraId: selected.id,
-							trackId: event.trackId,
-							itemType: event.type,
-							confidenceAvg: event.confidence,
-							direction: event.direction,
-							zone: draft.location || "Barra",
-						});
+					if (visualCrossing.events.length > 0) {
+						setBarEvents((current) =>
+							[...visualCrossing.events, ...current].slice(0, 20),
+						);
+						for (const event of visualCrossing.events) {
+							mutateBarExit({
+								cameraId: selected.id,
+								trackId: event.trackId,
+								itemType: event.type,
+								confidenceAvg: event.confidence,
+								direction: event.direction,
+								zone: draft.location || "Barra",
+							});
+						}
 					}
 				}
 			}
@@ -677,138 +687,122 @@ export default function CamerasPage() {
 			barModelBusyRef.current = true;
 			lastBarModelAtRef.current = now;
 			const inferenceStartedAt = performance.now();
-			try {
-				if (!barModelCanvasRef.current) {
-					barModelCanvasRef.current = document.createElement("canvas");
-				}
-				const modelCanvas = barModelCanvasRef.current;
-				const crop = { x: 0, y: 0, width: canvas.width, height: canvas.height };
-				modelCanvas.width = Math.max(416, Math.min(736, crop.width));
-				modelCanvas.height = Math.max(
-					240,
-					Math.round((crop.height / crop.width) * modelCanvas.width),
-				);
-				const modelContext = modelCanvas.getContext("2d");
-				if (!modelContext) return;
-				modelContext.drawImage(
-					canvas,
-					crop.x,
-					crop.y,
-					crop.width,
-					crop.height,
-					0,
-					0,
-					modelCanvas.width,
-					modelCanvas.height,
-				);
-				const scaleX = crop.width / modelCanvas.width;
-				const scaleY = crop.height / modelCanvas.height;
-				const modelFrame = {
-					width: modelCanvas.width,
-					height: modelCanvas.height,
-				};
-				const raw = await barYoloSessionRef.current.detect(
-					modelCanvas,
-					modelFrame,
-				);
-				const baseCandidates = candidatesFromCocoDetections(raw, modelFrame);
-				const drinksEnabled =
-					enabledBarItems.glass ||
-					enabledBarItems.bottle ||
-					enabledBarItems.can;
-				const candidates = dedupeBarCandidates(
-					baseCandidates
-						.filter((candidate) =>
-							isDrinkItem(candidate.type)
-								? drinksEnabled
-								: enabledBarItems[candidate.type],
-						)
-						.map((candidate) => {
-							const bbox: BoundingBox = [
-								crop.x + candidate.bbox[0] * scaleX,
-								crop.y + candidate.bbox[1] * scaleY,
-								candidate.bbox[2] * scaleX,
-								candidate.bbox[3] * scaleY,
-							];
-							return {
-								...candidate,
-								type: isDrinkItem(candidate.type) ? "glass" : candidate.type,
-								label: isDrinkItem(candidate.type) ? "bebida" : candidate.label,
-								bbox,
-								appearance: colorSignature(canvas, bbox),
-								seenAt: Date.now(),
-							};
-						}),
-				);
-				const visibleCandidates =
-					candidates.length > 0
-						? candidates
-						: barCandidatesRef.current.filter(
-								(candidate) => Date.now() - (candidate.seenAt ?? 0) <= 1_800,
-							);
-				barCandidatesRef.current = visibleCandidates;
-				setBarCandidates(visibleCandidates);
-				setBarRawDetectionCount(candidates.length);
-				const tracked = updateBarTracks(barTracksRef.current, candidates, {
-					now: Date.now(),
-					line: lineToCanvas(countingLine, canvas),
-					direction: countingDirection,
-					frameWidth: canvas.width,
-					frameHeight: canvas.height,
-					minHits: 1,
-					minConfirmMs: 120,
-					maxMisses: 10,
-					maxLostMs: 4_500,
-					lineTolerance: Math.max(8, countingBandPx * 0.45),
-					minTravelDistance: Math.max(16, countingBandPx * 0.48),
-					gatePadding: Math.max(12, countingBandPx * 0.75),
-					idPrefix: barSessionIdRef.current,
-				});
-				barTracksRef.current = tracked.tracks;
-				refreshVisualTemplates(
-					canvas,
-					tracked.tracks,
-					barVisualTemplatesRef.current,
-					Date.now(),
-				);
-				setBarTracks(tracked.tracks);
-				setBarDetectionCount(
-					mergeVisibleDrinkTracks(tracked.tracks.filter(isVisibleBarTrack))
-						.length,
-				);
-				if (tracked.events.length > 0) {
-					setBarEvents((current) =>
-						[...tracked.events, ...current].slice(0, 20),
+			// El worker recibe el canvas completo y hace su propio letterbox:
+			// el canvas intermedio solo anadia un redimensionado por frame.
+			const crop = { x: 0, y: 0, width: canvas.width, height: canvas.height };
+			const scaleX = 1;
+			const scaleY = 1;
+			const modelFrame = { width: canvas.width, height: canvas.height };
+			// Deliberadamente sin await: si esta funcion esperara a la inferencia,
+			// el bucle de dibujo quedaria bloqueado por `busyRef` mientras el
+			// modelo trabaja y volveriamos a ver el overlay a saltos.
+			const inference = barYoloSessionRef.current.detect(canvas, modelFrame);
+			void (async () => {
+				try {
+					const raw = await inference;
+					const baseCandidates = candidatesFromCocoDetections(raw, modelFrame);
+					const drinksEnabled =
+						enabledBarItems.glass ||
+						enabledBarItems.bottle ||
+						enabledBarItems.can;
+					const candidates = dedupeBarCandidates(
+						baseCandidates
+							.filter((candidate) =>
+								isDrinkItem(candidate.type)
+									? drinksEnabled
+									: enabledBarItems[candidate.type],
+							)
+							.map((candidate) => {
+								const bbox: BoundingBox = [
+									crop.x + candidate.bbox[0] * scaleX,
+									crop.y + candidate.bbox[1] * scaleY,
+									candidate.bbox[2] * scaleX,
+									candidate.bbox[3] * scaleY,
+								];
+								return {
+									...candidate,
+									type: isDrinkItem(candidate.type) ? "glass" : candidate.type,
+									label: isDrinkItem(candidate.type)
+										? "bebida"
+										: candidate.label,
+									bbox,
+									appearance: colorSignature(canvas, bbox),
+									seenAt: Date.now(),
+								};
+							}),
 					);
-					for (const event of tracked.events) {
-						mutateBarExit({
-							cameraId: selected.id,
-							trackId: event.trackId,
-							itemType: event.type,
-							confidenceAvg: event.confidence,
-							direction: event.direction,
-							zone: draft.location || "Barra",
-						});
+					const visibleCandidates =
+						candidates.length > 0
+							? candidates
+							: barCandidatesRef.current.filter(
+									(candidate) => Date.now() - (candidate.seenAt ?? 0) <= 1_800,
+								);
+					barCandidatesRef.current = visibleCandidates;
+					setBarCandidates(visibleCandidates);
+					setBarRawDetectionCount(candidates.length);
+					const tracked = updateBarTracks(barTracksRef.current, candidates, {
+						now: Date.now(),
+						line: lineToCanvas(countingLine, canvas),
+						direction: countingDirection,
+						frameWidth: canvas.width,
+						frameHeight: canvas.height,
+						// Un track fantasma sobrevivia 4.5s sin ninguna deteccion y
+						// quedaba dibujado encima del objeto real.
+						minHits: 2,
+						minConfirmMs: 200,
+						maxMisses: 4,
+						maxLostMs: 1_200,
+						lineTolerance: Math.max(8, countingBandPx * 0.45),
+						minTravelDistance: Math.max(16, countingBandPx * 0.48),
+						gatePadding: Math.max(12, countingBandPx * 0.75),
+						idPrefix: barSessionIdRef.current,
+					});
+					barTracksRef.current = tracked.tracks;
+					refreshVisualTemplates(
+						canvas,
+						tracked.tracks,
+						barVisualTemplatesRef.current,
+						Date.now(),
+					);
+					setBarTracks(tracked.tracks);
+					setBarDetectionCount(
+						mergeVisibleDrinkTracks(tracked.tracks.filter(isVisibleBarTrack))
+							.length,
+					);
+					if (tracked.events.length > 0) {
+						setBarEvents((current) =>
+							[...tracked.events, ...current].slice(0, 20),
+						);
+						for (const event of tracked.events) {
+							mutateBarExit({
+								cameraId: selected.id,
+								trackId: event.trackId,
+								itemType: event.type,
+								confidenceAvg: event.confidence,
+								direction: event.direction,
+								zone: draft.location || "Barra",
+							});
+						}
 					}
+					drawDetections(canvas, [], tracked.tracks, visibleCandidates);
+					setBarInferenceMs(Math.round(performance.now() - inferenceStartedAt));
+					setDetection({
+						configured: true,
+						personCount: 0,
+						confidenceAvg: null,
+						message: "YOLO y seguimiento temporal activos.",
+					});
+				} catch (error) {
+					setBarModelStatus("error");
+					setCameraError(
+						error instanceof Error
+							? `Fallo YOLO: ${error.message}`
+							: "Fallo el detector YOLO.",
+					);
+				} finally {
+					barModelBusyRef.current = false;
 				}
-				drawDetections(canvas, [], tracked.tracks, visibleCandidates);
-				setBarInferenceMs(Math.round(performance.now() - inferenceStartedAt));
-				setDetection({
-					configured: true,
-					personCount: 0,
-					confidenceAvg: null,
-					message: "YOLO y seguimiento temporal activos.",
-				});
-			} catch (error) {
-				setBarModelStatus("error");
-				setCameraError(
-					error instanceof Error
-						? `Fallo YOLO: ${error.message}`
-						: "Fallo el detector YOLO.",
-				);
-			} finally {
-				barModelBusyRef.current = false;
-			}
+			})();
 		},
 		[
 			barModelStatus,
@@ -994,11 +988,29 @@ export default function CamerasPage() {
 		if (!running || !selected) return;
 		let cancelled = false;
 		let timeout: ReturnType<typeof setTimeout>;
+		let frame: number;
+
+		if (mode === "bar_exit") {
+			// El dibujo va a la cadencia de la pantalla y no espera al modelo: la
+			// inferencia corre en su worker y actualiza los tracks cuando termina.
+			// Antes cada vuelta esperaba a la inferencia, asi que el overlay se
+			// redibujaba al ritmo del modelo y se veia a saltos.
+			const render = () => {
+				if (cancelled) return;
+				void detectOnce();
+				frame = requestAnimationFrame(render);
+			};
+			frame = requestAnimationFrame(render);
+			return () => {
+				cancelled = true;
+				cancelAnimationFrame(frame);
+			};
+		}
 
 		const loop = async () => {
 			if (cancelled) return;
 			await detectOnce();
-			timeout = setTimeout(loop, mode === "bar_exit" ? 90 : 250);
+			timeout = setTimeout(loop, 250);
 		};
 
 		timeout = setTimeout(loop, 250);
@@ -2314,11 +2326,11 @@ function markVisualCrossings(
 			stepTravel > 0 &&
 			visualCrossesFiniteLine(previous, current, line, gatePadding);
 		if (!crossed) {
+			// currentSide ya no puede ser 0: el early return de arriba lo descarta.
 			if (
-				currentSide !== 0 &&
-				(track.lastSide !== currentSide ||
-					track.lastStableCenter?.x !== current.x ||
-					track.lastStableCenter?.y !== current.y)
+				track.lastSide !== currentSide ||
+				track.lastStableCenter?.x !== current.x ||
+				track.lastStableCenter?.y !== current.y
 			) {
 				changed = true;
 				return {

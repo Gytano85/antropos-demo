@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import {
 	type BarCandidate,
 	type BarTrack,
+	mergeDuplicateTracks,
 	updateBarTracks,
 } from "../../../cameras/bar-service-tracker";
 
@@ -202,5 +203,91 @@ function candidate(
 		support: 2,
 		bbox: [centerX - 55, centerY - 35, 110, 70],
 		appearance: type === "glass" ? [0.1, 0.2, 0.3] : [0.7, 0.2, 0.1],
+	};
+}
+
+describe("duplicate track merging", () => {
+	it("collapses two tracks sitting on the same object", () => {
+		const merged = mergeDuplicateTracks([
+			buildTrack({ id: "old", bbox: [100, 100, 90, 120], firstSeenAt: 0 }),
+			buildTrack({ id: "new", bbox: [104, 103, 88, 118], firstSeenAt: 500 }),
+		]);
+		expect(merged).toHaveLength(1);
+		// Gana el mas antiguo para no perder su historial ni su id.
+		expect(merged[0]?.id).toBe("old");
+	});
+
+	it("keeps two drinks standing side by side apart", () => {
+		const merged = mergeDuplicateTracks([
+			buildTrack({ id: "a", bbox: [100, 100, 90, 120], firstSeenAt: 0 }),
+			buildTrack({ id: "b", bbox: [175, 100, 90, 120], firstSeenAt: 0 }),
+		]);
+		expect(merged).toHaveLength(2);
+	});
+
+	it("never resurrects a counted object as uncounted", () => {
+		const merged = mergeDuplicateTracks([
+			buildTrack({
+				id: "old",
+				bbox: [100, 100, 90, 120],
+				firstSeenAt: 0,
+				counted: false,
+			}),
+			buildTrack({
+				id: "new",
+				bbox: [102, 101, 90, 120],
+				firstSeenAt: 500,
+				counted: true,
+			}),
+		]);
+		expect(merged).toHaveLength(1);
+		// Si se perdiera el `counted`, el objeto volveria a cruzar y contaria doble.
+		expect(merged[0]?.counted).toBe(true);
+	});
+
+	it("does not merge a plate into a drink", () => {
+		const merged = mergeDuplicateTracks([
+			buildTrack({ id: "drink", bbox: [100, 100, 90, 120], firstSeenAt: 0 }),
+			buildTrack({
+				id: "plate",
+				bbox: [100, 100, 90, 120],
+				firstSeenAt: 100,
+				type: "plate",
+			}),
+		]);
+		expect(merged).toHaveLength(2);
+	});
+
+	it("leaves a single track untouched", () => {
+		const only = buildTrack({ id: "solo", bbox: [10, 10, 50, 50] });
+		expect(mergeDuplicateTracks([only])).toEqual([only]);
+	});
+});
+
+function buildTrack(overrides: Partial<BarTrack> & { id: string }): BarTrack {
+	const bbox = overrides.bbox ?? [0, 0, 50, 50];
+	const center = { x: bbox[0] + bbox[2] / 2, y: bbox[1] + bbox[3] / 2 };
+	return {
+		type: "glass",
+		label: "glass",
+		state: "confirmed",
+		confidence: 0.5,
+		support: 1,
+		center,
+		firstCenter: center,
+		previousCenter: null,
+		lastStableCenter: center,
+		originSide: 1,
+		lastSide: 1,
+		velocity: { x: 0, y: 0 },
+		firstSeenAt: 0,
+		lastSeenAt: 1_000,
+		hits: 3,
+		consecutiveHits: 3,
+		misses: 0,
+		travelDistance: 10,
+		counted: false,
+		...overrides,
+		bbox,
 	};
 }

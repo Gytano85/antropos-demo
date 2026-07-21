@@ -268,7 +268,75 @@ export function updateBarTracks(
 		});
 	}
 
-	return { tracks: nextTracks, events };
+	return { tracks: mergeDuplicateTracks(nextTracks), events };
+}
+
+/**
+ * Colapsa tracks que siguen al mismo objeto fisico.
+ *
+ * Cuando una deteccion llega tarde el objeto ya se movio y el emparejamiento
+ * falla, generando un track nuevo encima del anterior; ambos quedaban vivos y
+ * dibujados. El umbral es alto a proposito: dos bebidas juntas en una charola
+ * se solapan poco y no deben fusionarse.
+ */
+export function mergeDuplicateTracks(tracks: BarTrack[]): BarTrack[] {
+	if (tracks.length < 2) return tracks;
+	const merged: BarTrack[] = [];
+
+	// El mas antiguo gana: conserva su id, su historial y su estado de conteo.
+	for (const track of [...tracks].sort(
+		(a, b) => a.firstSeenAt - b.firstSeenAt,
+	)) {
+		const targetIndex = merged.findIndex(
+			(existing) =>
+				itemGroup(existing.type) === itemGroup(track.type) &&
+				followSameObject(existing, track),
+		);
+		if (targetIndex === -1) {
+			merged.push(track);
+			continue;
+		}
+		const target = merged[targetIndex];
+		if (target) merged[targetIndex] = absorbTrack(target, track);
+	}
+
+	return merged;
+}
+
+function followSameObject(a: BarTrack, b: BarTrack) {
+	if (intersectionOverUnion(a.bbox, b.bbox) >= 0.65) return true;
+	// Una caja casi contenida en otra del mismo tamano tambien es el mismo objeto.
+	return (
+		intersectionOverSmaller(a.bbox, b.bbox) >= 0.85 &&
+		relativeSizeDifference(a.bbox, b.bbox) <= 0.25
+	);
+}
+
+function absorbTrack(target: BarTrack, duplicate: BarTrack): BarTrack {
+	return {
+		...target,
+		// Si cualquiera ya cruzo, el fusionado queda contado: de lo contrario el
+		// objeto volveria a cruzar la linea y se contaria dos veces.
+		counted: target.counted || duplicate.counted,
+		state:
+			target.state === "confirmed" || duplicate.state === "confirmed"
+				? "confirmed"
+				: target.state,
+		hits: Math.max(target.hits, duplicate.hits),
+		consecutiveHits: Math.max(
+			target.consecutiveHits,
+			duplicate.consecutiveHits,
+		),
+		misses: Math.min(target.misses, duplicate.misses),
+		support: Math.max(target.support, duplicate.support),
+		confidence: Math.max(target.confidence, duplicate.confidence),
+		travelDistance: Math.max(target.travelDistance, duplicate.travelDistance),
+		lastSeenAt: Math.max(target.lastSeenAt, duplicate.lastSeenAt),
+		originSide:
+			target.originSide !== 0 ? target.originSide : duplicate.originSide,
+		lastSide: target.lastSide !== 0 ? target.lastSide : duplicate.lastSide,
+		lastStableCenter: target.lastStableCenter ?? duplicate.lastStableCenter,
+	};
 }
 
 function canCountTrack(track: BarTrack) {
