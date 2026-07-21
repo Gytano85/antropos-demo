@@ -583,19 +583,46 @@ export default function CamerasPage() {
 		async (canvas: HTMLCanvasElement) => {
 			if (!selected) return;
 			const now = Date.now();
-			const visuallyTracked = refineTracksWithVisualTemplates(
+			let visuallyTracked = refineTracksWithVisualTemplates(
 				canvas,
 				barTracksRef.current,
 				barVisualTemplatesRef.current,
 				now,
 			);
-			if (visuallyTracked !== barTracksRef.current) {
+			const visualCrossing = markVisualCrossings(
+				visuallyTracked,
+				lineToCanvas(countingLine, canvas),
+				countingDirection,
+				Math.max(18, canvas.width * 0.026),
+				Math.max(12, canvas.width * 0.025),
+				now,
+			);
+			visuallyTracked = visualCrossing.tracks;
+			if (
+				visuallyTracked !== barTracksRef.current ||
+				visualCrossing.events.length > 0
+			) {
 				barTracksRef.current = visuallyTracked;
 				setBarTracks(visuallyTracked);
 				setBarDetectionCount(
 					mergeVisibleDrinkTracks(visuallyTracked.filter(isVisibleBarTrack))
 						.length,
 				);
+				if (visualCrossing.events.length > 0) {
+					setBarEvents((current) =>
+						[...visualCrossing.events, ...current].slice(0, 20),
+					);
+					for (const event of visualCrossing.events) {
+						mutateBarExit({
+							cameraId: selected.id,
+							trackId: event.trackId,
+							itemType: event.type,
+							confidenceAvg: event.confidence,
+							direction: event.direction,
+							zone: draft.location || "Barra",
+						});
+					}
+				}
 			}
 			drawDetections(canvas, [], visuallyTracked, barCandidatesRef.current);
 			if (barModelStatus === "idle") {
@@ -2154,6 +2181,89 @@ function projectTrackForDisplay(track: BarTrack): BarTrack {
 	};
 }
 
+function markVisualCrossings(
+	tracks: BarTrack[],
+	line: CountingLine,
+	direction: CountingDirection,
+	minTravelDistance: number,
+	gatePadding: number,
+	now: number,
+) {
+	let changed = false;
+	const events: BarExitEvent[] = [];
+	const nextTracks = tracks.map((track) => {
+		if (
+			track.counted ||
+			!isDrinkItem(track.type) ||
+			track.state !== "confirmed" ||
+			!track.previousCenter
+		) {
+			return track;
+		}
+		const previous = track.previousCenter;
+		const current = track.center;
+		const previousSide =
+			track.lastSide !== 0
+				? track.lastSide
+				: visualStableSide(previous, line, 6);
+		const currentSide = visualStableSide(current, line, 6);
+		if (
+			previousSide === 0 ||
+			currentSide === 0 ||
+			previousSide === currentSide
+		) {
+			return {
+				...track,
+				lastSide: currentSide === 0 ? track.lastSide : currentSide,
+				lastStableCenter: currentSide === 0 ? track.lastStableCenter : current,
+			};
+		}
+		const directionalTravel = visualMovementInDirection(
+			track.firstCenter,
+			current,
+			direction,
+		);
+		const stepTravel = visualMovementInDirection(previous, current, direction);
+		const crossed =
+			directionalTravel >= minTravelDistance &&
+			stepTravel > 0 &&
+			visualCrossesFiniteLine(previous, current, line, gatePadding);
+		if (!crossed) {
+			if (
+				currentSide !== 0 &&
+				(track.lastSide !== currentSide ||
+					track.lastStableCenter?.x !== current.x ||
+					track.lastStableCenter?.y !== current.y)
+			) {
+				changed = true;
+				return {
+					...track,
+					lastSide: currentSide,
+					lastStableCenter: current,
+				};
+			}
+			return track;
+		}
+		changed = true;
+		const countedTrack = {
+			...track,
+			counted: true,
+			lastSide: currentSide,
+			lastStableCenter: current,
+		};
+		events.push({
+			trackId: track.id,
+			type: track.type,
+			confidence: track.confidence,
+			direction,
+			time: now,
+			crossingPoint: visualLineIntersection(previous, current, line),
+		});
+		return countedTrack;
+	});
+	return { tracks: changed ? nextTracks : tracks, events };
+}
+
 function refineTracksWithVisualTemplates(
 	canvas: HTMLCanvasElement,
 	tracks: BarTrack[],
@@ -2337,6 +2447,93 @@ function clampBox(
 
 function smoothNumber(current: number, next: number, alpha: number) {
 	return current * (1 - alpha) + next * alpha;
+}
+
+function visualStableSide(
+	point: { x: number; y: number },
+	line: CountingLine,
+	tolerance: number,
+): -1 | 0 | 1 {
+	const distance = visualSignedDistanceToLine(point, line);
+	if (Math.abs(distance) <= tolerance) return 0;
+	return distance > 0 ? 1 : -1;
+}
+
+function visualSignedDistanceToLine(
+	point: { x: number; y: number },
+	line: CountingLine,
+) {
+	const dx = line.end.x - line.start.x;
+	const dy = line.end.y - line.start.y;
+	const length = Math.hypot(dx, dy);
+	if (length < 1e-6) return 0;
+	return (
+		(dx * (point.y - line.start.y) - dy * (point.x - line.start.x)) / length
+	);
+}
+
+function visualMovementInDirection(
+	start: { x: number; y: number },
+	end: { x: number; y: number },
+	direction: CountingDirection,
+) {
+	if (direction === "left_to_right") return end.x - start.x;
+	if (direction === "right_to_left") return start.x - end.x;
+	if (direction === "top_to_bottom") return end.y - start.y;
+	return start.y - end.y;
+}
+
+function visualCrossesFiniteLine(
+	previous: { x: number; y: number },
+	current: { x: number; y: number },
+	line: CountingLine,
+	padding: number,
+) {
+	const intersection = visualSegmentIntersection(previous, current, line);
+	if (!intersection) return false;
+	const lineLength = Math.hypot(
+		line.end.x - line.start.x,
+		line.end.y - line.start.y,
+	);
+	const normalizedPadding = padding / Math.max(1e-6, lineLength);
+	return (
+		intersection.pathT >= 0 &&
+		intersection.pathT <= 1 &&
+		intersection.lineT >= -normalizedPadding &&
+		intersection.lineT <= 1 + normalizedPadding
+	);
+}
+
+function visualLineIntersection(
+	previous: { x: number; y: number },
+	current: { x: number; y: number },
+	line: CountingLine,
+) {
+	const intersection = visualSegmentIntersection(previous, current, line);
+	const pathT = intersection?.pathT ?? 0.5;
+	return {
+		x: previous.x + (current.x - previous.x) * pathT,
+		y: previous.y + (current.y - previous.y) * pathT,
+	};
+}
+
+function visualSegmentIntersection(
+	pathStart: { x: number; y: number },
+	pathEnd: { x: number; y: number },
+	line: CountingLine,
+) {
+	const rx = pathEnd.x - pathStart.x;
+	const ry = pathEnd.y - pathStart.y;
+	const sx = line.end.x - line.start.x;
+	const sy = line.end.y - line.start.y;
+	const denominator = rx * sy - ry * sx;
+	if (Math.abs(denominator) < 1e-8) return null;
+	const qpx = line.start.x - pathStart.x;
+	const qpy = line.start.y - pathStart.y;
+	return {
+		pathT: (qpx * sy - qpy * sx) / denominator,
+		lineT: (qpx * ry - qpy * rx) / denominator,
+	};
 }
 
 function lineToCanvas(
