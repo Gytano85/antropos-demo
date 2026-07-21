@@ -90,6 +90,13 @@ type DetectionResult = {
 type CameraMode = "presence" | "bar_exit";
 type BarModelStatus = "idle" | "loading" | "ready" | "unsupported" | "error";
 type BarModelRuntime = "webgpu" | "wasm";
+type VisualTrackTemplate = {
+	columns: number;
+	rows: number;
+	values: Uint8Array;
+	bbox: BoundingBox;
+	updatedAt: number;
+};
 
 export default function CamerasPage() {
 	const trpc = useTRPC();
@@ -139,6 +146,7 @@ export default function CamerasPage() {
 		useState<CountingDirection>("left_to_right");
 	const [barTracks, setBarTracks] = useState<BarTrack[]>([]);
 	const barTracksRef = useRef<BarTrack[]>([]);
+	const barVisualTemplatesRef = useRef(new Map<string, VisualTrackTemplate>());
 	const [barCandidates, setBarCandidates] = useState<
 		Array<{
 			type: BarItemType;
@@ -367,6 +375,7 @@ export default function CamerasPage() {
 	const resetBarTracking = useCallback(() => {
 		barTracksRef.current = [];
 		barCandidatesRef.current = [];
+		barVisualTemplatesRef.current.clear();
 		lastBarModelAtRef.current = 0;
 		barSessionIdRef.current = createVisionSessionId();
 		setBarTracks([]);
@@ -574,12 +583,21 @@ export default function CamerasPage() {
 		async (canvas: HTMLCanvasElement) => {
 			if (!selected) return;
 			const now = Date.now();
-			drawDetections(
+			const visuallyTracked = refineTracksWithVisualTemplates(
 				canvas,
-				[],
 				barTracksRef.current,
-				barCandidatesRef.current,
+				barVisualTemplatesRef.current,
+				now,
 			);
+			if (visuallyTracked !== barTracksRef.current) {
+				barTracksRef.current = visuallyTracked;
+				setBarTracks(visuallyTracked);
+				setBarDetectionCount(
+					mergeVisibleDrinkTracks(visuallyTracked.filter(isVisibleBarTrack))
+						.length,
+				);
+			}
+			drawDetections(canvas, [], visuallyTracked, barCandidatesRef.current);
 			if (barModelStatus === "idle") {
 				void getBarModelDetector().catch(() => undefined);
 				return;
@@ -684,6 +702,12 @@ export default function CamerasPage() {
 					idPrefix: barSessionIdRef.current,
 				});
 				barTracksRef.current = tracked.tracks;
+				refreshVisualTemplates(
+					canvas,
+					tracked.tracks,
+					barVisualTemplatesRef.current,
+					Date.now(),
+				);
 				setBarTracks(tracked.tracks);
 				setBarDetectionCount(
 					mergeVisibleDrinkTracks(tracked.tracks.filter(isVisibleBarTrack))
@@ -2128,6 +2152,191 @@ function projectTrackForDisplay(track: BarTrack): BarTrack {
 			y: track.center.y + dy,
 		},
 	};
+}
+
+function refineTracksWithVisualTemplates(
+	canvas: HTMLCanvasElement,
+	tracks: BarTrack[],
+	templates: Map<string, VisualTrackTemplate>,
+	now: number,
+) {
+	if (tracks.length === 0 || templates.size === 0) return tracks;
+	const context = canvas.getContext("2d", { willReadFrequently: true });
+	if (!context) return tracks;
+	const frame = context.getImageData(0, 0, canvas.width, canvas.height);
+	let changed = false;
+	const refined = tracks.map((track) => {
+		if (!isDrawableBarTrack(track) || !isDrinkItem(track.type)) return track;
+		const template = templates.get(track.id);
+		if (!template) return track;
+		const match = findVisualTemplateMatch(frame, track, template, now);
+		if (!match || match.score > 38) return track;
+		const previousCenter = track.center;
+		const center = {
+			x: match.bbox[0] + match.bbox[2] / 2,
+			y: match.bbox[1] + match.bbox[3] / 2,
+		};
+		const elapsed = Math.max(1, now - track.lastSeenAt);
+		changed = true;
+		return {
+			...track,
+			bbox: match.bbox,
+			previousCenter,
+			center,
+			velocity: {
+				x: smoothNumber(
+					track.velocity.x,
+					(center.x - previousCenter.x) / elapsed,
+					0.34,
+				),
+				y: smoothNumber(
+					track.velocity.y,
+					(center.y - previousCenter.y) / elapsed,
+					0.34,
+				),
+			},
+			lastSeenAt: now,
+			misses: Math.max(0, track.misses - 1),
+		};
+	});
+	return changed ? refined : tracks;
+}
+
+function refreshVisualTemplates(
+	canvas: HTMLCanvasElement,
+	tracks: BarTrack[],
+	templates: Map<string, VisualTrackTemplate>,
+	now: number,
+) {
+	const liveIds = new Set(tracks.map((track) => track.id));
+	for (const id of templates.keys()) {
+		if (!liveIds.has(id)) templates.delete(id);
+	}
+	const context = canvas.getContext("2d", { willReadFrequently: true });
+	if (!context) return;
+	const frame = context.getImageData(0, 0, canvas.width, canvas.height);
+	for (const track of tracks) {
+		if (!isDrawableBarTrack(track) || !isDrinkItem(track.type)) continue;
+		const template = captureVisualTemplate(frame, track.bbox, now);
+		if (template) templates.set(track.id, template);
+	}
+}
+
+function captureVisualTemplate(
+	frame: ImageData,
+	bbox: BoundingBox,
+	now: number,
+): VisualTrackTemplate | null {
+	const safe = clampBox(bbox, frame.width, frame.height);
+	if (!safe || safe[2] < 8 || safe[3] < 8) return null;
+	const columns = 12;
+	const rows = 12;
+	const values = new Uint8Array(columns * rows);
+	let sum = 0;
+	for (let row = 0; row < rows; row += 1) {
+		for (let column = 0; column < columns; column += 1) {
+			const x = Math.round(safe[0] + ((column + 0.5) / columns) * safe[2]);
+			const y = Math.round(safe[1] + ((row + 0.5) / rows) * safe[3]);
+			const value = frameGrayAt(frame, x, y);
+			values[row * columns + column] = value;
+			sum += value;
+		}
+	}
+	const mean = sum / values.length;
+	const variance =
+		values.reduce((total, value) => total + (value - mean) ** 2, 0) /
+		values.length;
+	if (Math.sqrt(variance) < 5) return null;
+	return { columns, rows, values, bbox: safe, updatedAt: now };
+}
+
+function findVisualTemplateMatch(
+	frame: ImageData,
+	track: BarTrack,
+	template: VisualTrackTemplate,
+	now: number,
+) {
+	const elapsed = Math.min(320, Math.max(0, now - track.lastSeenAt));
+	const predicted: BoundingBox = [
+		track.bbox[0] + track.velocity.x * elapsed,
+		track.bbox[1] + track.velocity.y * elapsed,
+		track.bbox[2],
+		track.bbox[3],
+	];
+	const searchRadius = Math.max(
+		18,
+		Math.min(64, Math.max(track.bbox[2], track.bbox[3]) * 0.55),
+	);
+	const step = Math.max(
+		4,
+		Math.round(Math.max(track.bbox[2], track.bbox[3]) / 12),
+	);
+	let best: { bbox: BoundingBox; score: number } | null = null;
+	for (let dy = -searchRadius; dy <= searchRadius; dy += step) {
+		for (let dx = -searchRadius; dx <= searchRadius; dx += step) {
+			const candidate = clampBox(
+				[predicted[0] + dx, predicted[1] + dy, predicted[2], predicted[3]],
+				frame.width,
+				frame.height,
+			);
+			if (!candidate) continue;
+			const score = visualTemplateScore(frame, candidate, template);
+			const centerPenalty =
+				(Math.hypot(dx, dy) / Math.max(1, searchRadius)) * 2.5;
+			const finalScore = score + centerPenalty;
+			if (!best || finalScore < best.score) {
+				best = { bbox: candidate, score: finalScore };
+			}
+		}
+	}
+	return best;
+}
+
+function visualTemplateScore(
+	frame: ImageData,
+	bbox: BoundingBox,
+	template: VisualTrackTemplate,
+) {
+	let total = 0;
+	for (let row = 0; row < template.rows; row += 1) {
+		for (let column = 0; column < template.columns; column += 1) {
+			const x = Math.round(
+				bbox[0] + ((column + 0.5) / template.columns) * bbox[2],
+			);
+			const y = Math.round(bbox[1] + ((row + 0.5) / template.rows) * bbox[3]);
+			const expected = template.values[row * template.columns + column] ?? 0;
+			total += Math.abs(frameGrayAt(frame, x, y) - expected);
+		}
+	}
+	return total / template.values.length;
+}
+
+function frameGrayAt(frame: ImageData, x: number, y: number) {
+	const safeX = Math.max(0, Math.min(frame.width - 1, x));
+	const safeY = Math.max(0, Math.min(frame.height - 1, y));
+	const index = (safeY * frame.width + safeX) * 4;
+	return Math.round(
+		(frame.data[index] ?? 0) * 0.299 +
+			(frame.data[index + 1] ?? 0) * 0.587 +
+			(frame.data[index + 2] ?? 0) * 0.114,
+	);
+}
+
+function clampBox(
+	bbox: BoundingBox,
+	frameWidth: number,
+	frameHeight: number,
+): BoundingBox | null {
+	const width = Math.max(1, Math.min(bbox[2], frameWidth));
+	const height = Math.max(1, Math.min(bbox[3], frameHeight));
+	const x = Math.max(0, Math.min(frameWidth - width, bbox[0]));
+	const y = Math.max(0, Math.min(frameHeight - height, bbox[1]));
+	if (![x, y, width, height].every(Number.isFinite)) return null;
+	return [x, y, width, height];
+}
+
+function smoothNumber(current: number, next: number, alpha: number) {
+	return current * (1 - alpha) + next * alpha;
 }
 
 function lineToCanvas(
