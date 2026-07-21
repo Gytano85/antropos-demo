@@ -406,7 +406,7 @@ export default function CamerasPage() {
 			}
 			setRunning(true);
 			prepareDetector();
-			toast.success("Camara IP activada.");
+			toast.success("Cámara IP activada.");
 			setStartingCamera(false);
 			return;
 		}
@@ -419,7 +419,7 @@ export default function CamerasPage() {
 			}
 			setRunning(true);
 			prepareDetector();
-			toast.success("Camara encendida.");
+			toast.success("Cámara encendida.");
 		} catch (error) {
 			const message = cameraAccessMessage(error);
 			setCameraError(message);
@@ -542,7 +542,7 @@ export default function CamerasPage() {
 					context.setLineDash([6, 6]);
 					context.strokeRect(x, y, width, height);
 					context.setLineDash([]);
-					const label = `candidato ${itemLabel(candidate.type)} ${Math.round(
+					const label = `detectando ${businessItemLabel(candidate.type)} ${Math.round(
 						candidate.confidence * 100,
 					)}%`;
 					const labelWidth = context.measureText(label).width + 12;
@@ -563,7 +563,7 @@ export default function CamerasPage() {
 						context.lineTo(track.center.x, track.center.y);
 						context.stroke();
 					}
-					const label = `${itemLabel(track.type)} ${Math.round(
+					const label = `${businessItemLabel(track.type)} ${Math.round(
 						track.confidence * 100,
 					)}%${track.counted ? " · contado" : ""}`;
 					const labelWidth = context.measureText(label).width + 12;
@@ -845,7 +845,7 @@ export default function CamerasPage() {
 					message:
 						stable.personCount > 1
 							? "Se detecto mas de una persona en el puesto."
-							: "Deteccion local de personas activa.",
+							: "Detección local de personas activa.",
 					predictions: people.map((prediction) => ({
 						class: prediction.class,
 						confidence: prediction.score,
@@ -940,6 +940,14 @@ export default function CamerasPage() {
 	const savedExitCount = savedExitEvents.length;
 	const sessionExitCount = barEvents.length;
 	const confirmedBarTracks = barTracks.filter(isVisibleBarTrack);
+	const sessionDrinkCount = drinkTotal(sessionExitSummary);
+	const savedDrinkCount = drinkTotal(savedExitSummary);
+	const visibleDrinkTracks = confirmedBarTracks.filter((track) =>
+		isDrinkItem(track.type),
+	).length;
+	const visibleDrinkCandidates = barCandidates.filter((candidate) =>
+		isDrinkItem(candidate.type),
+	).length;
 
 	useEffect(() => {
 		const resetKey = `${mode}:${countingDirection}:${countingLine.start.x}:${countingLine.start.y}:${countingLine.end.x}:${countingLine.end.y}`;
@@ -1021,10 +1029,10 @@ export default function CamerasPage() {
 					<div>
 						<div className="flex items-center gap-2">
 							<CameraIcon className="h-6 w-6 text-primary" />
-							<h1 className="font-bold text-2xl">Camaras operativas</h1>
+							<h1 className="font-bold text-2xl">Cámaras operativas</h1>
 						</div>
 						<p className="mt-1 text-muted-foreground text-sm">
-							Deteccion local para presencia y conteo de pedidos al salir de la
+							Detección local para presencia y conteo de pedidos al salir de la
 							barra.
 						</p>
 					</div>
@@ -1064,20 +1072,20 @@ export default function CamerasPage() {
 					<ModeButton
 						active={mode === "bar_exit"}
 						title="Salida de barra"
-						description="Cuenta platos, vasos, botellas y latas por cruce."
+						description="Cuenta bebidas al cruzar la zona definida."
 						onClick={() => setMode("bar_exit")}
 					/>
 				</div>
 			</div>
 
 			<div className="grid gap-4 md:grid-cols-4">
-				<Metric icon={CameraIcon} label="Camaras" value={devices.length} />
+				<Metric icon={CameraIcon} label="Cámaras" value={devices.length} />
 				<Metric
 					icon={mode === "bar_exit" ? PackageIcon : UsersIcon}
-					label={mode === "bar_exit" ? "Salidas hoy" : "Personas ahora"}
+					label={mode === "bar_exit" ? "Bebidas contadas" : "Personas ahora"}
 					value={
 						mode === "bar_exit"
-							? savedExitCount + sessionExitCount
+							? savedDrinkCount + sessionDrinkCount
 							: stablePresence.personCount ||
 								selected?.lastPersonCount ||
 								detection?.personCount ||
@@ -1091,10 +1099,12 @@ export default function CamerasPage() {
 				/>
 				<Metric
 					icon={EyeIcon}
-					label={mode === "bar_exit" ? "Objetos visibles" : "Ultima deteccion"}
+					label={
+						mode === "bar_exit" ? "Bebidas en pantalla" : "Última detección"
+					}
 					value={
 						mode === "bar_exit"
-							? barDetectionCount
+							? visibleDrinkTracks || visibleDrinkCandidates
 							: selected?.lastSeenAt
 								? new Date(selected.lastSeenAt).toLocaleTimeString()
 								: "Sin datos"
@@ -1110,13 +1120,13 @@ export default function CamerasPage() {
 							{mode === "bar_exit"
 								? "Conteo en salida de barra"
 								: draft.sourceType === "ip_camera"
-									? "Camara IP / stream"
+									? "Cámara IP / stream"
 									: "Webcam de prueba"}
 						</CardTitle>
 						<CardDescription>
 							{mode === "bar_exit"
-								? "Arrastra la línea naranja hasta el punto de salida. Solo se cuentan bebidas confirmadas por YOLO al completar el cruce."
-								: "La webcam sirve para demo. Para camara IP usa una URL HTTP/MJPEG o snapshot accesible desde la misma red."}
+								? "Arrastra la línea naranja al punto exacto de salida. La bebida se cuenta al completar el cruce."
+								: "La webcam sirve para demo. Para cámara IP usa una URL HTTP/MJPEG o snapshot accesible desde la misma red."}
 						</CardDescription>
 					</CardHeader>
 					<CardContent className="space-y-4">
@@ -1126,7 +1136,7 @@ export default function CamerasPage() {
 								<img
 									ref={ipImageRef}
 									src={running ? draft.streamUrl : undefined}
-									alt="Vista de camara IP"
+									alt="Vista de cámara IP"
 									crossOrigin="anonymous"
 									className="aspect-video w-full object-cover"
 								/>
@@ -1167,7 +1177,7 @@ export default function CamerasPage() {
 								{startingCamera
 									? "Solicitando cámara"
 									: draft.sourceType === "ip_camera"
-										? "Conectar camara IP"
+										? "Conectar cámara IP"
 										: "Encender webcam"}
 							</Button>
 							<Button
@@ -1199,6 +1209,8 @@ export default function CamerasPage() {
 								barRawDetectionCount={barRawDetectionCount}
 								barRawModelLabels={barRawModelLabels}
 								barTracks={confirmedBarTracks}
+								visibleDrinkTracks={visibleDrinkTracks}
+								visibleDrinkCandidates={visibleDrinkCandidates}
 								modelStatus={barModelStatus}
 								modelRuntime={barModelRuntime}
 								modelDefinition={barModelDefinition}
@@ -1207,6 +1219,8 @@ export default function CamerasPage() {
 								savedExitSummary={savedExitSummary}
 								sessionExitCount={sessionExitCount}
 								savedExitCount={savedExitCount}
+								sessionDrinkCount={sessionDrinkCount}
+								savedDrinkCount={savedDrinkCount}
 								onCenterGate={() =>
 									setCountingLine((current) =>
 										moveLineToPoint(current, {
@@ -1265,7 +1279,7 @@ export default function CamerasPage() {
 								modelStatus={barModelStatus}
 								modelProgress={barModelProgress}
 								modelRuntime={barModelRuntime}
-								visibleObjects={barDetectionCount}
+								visibleObjects={visibleDrinkTracks || visibleDrinkCandidates}
 								activeTracks={confirmedBarTracks.length}
 								inferenceMs={barInferenceMs}
 							/>
@@ -1582,6 +1596,8 @@ function BarExitPanel({
 	barRawDetectionCount,
 	barRawModelLabels,
 	barTracks,
+	visibleDrinkTracks,
+	visibleDrinkCandidates,
 	modelStatus,
 	modelRuntime,
 	modelDefinition,
@@ -1590,6 +1606,8 @@ function BarExitPanel({
 	savedExitSummary,
 	sessionExitCount,
 	savedExitCount,
+	sessionDrinkCount,
+	savedDrinkCount,
 	onCenterGate,
 	onReset,
 }: {
@@ -1603,6 +1621,8 @@ function BarExitPanel({
 	barRawDetectionCount: number;
 	barRawModelLabels: string[];
 	barTracks: BarTrack[];
+	visibleDrinkTracks: number;
+	visibleDrinkCandidates: number;
 	modelStatus: BarModelStatus;
 	modelRuntime: BarModelRuntime | null;
 	modelDefinition: BarModelDefinition | null;
@@ -1611,6 +1631,8 @@ function BarExitPanel({
 	savedExitSummary: Record<BarItemType, number>;
 	sessionExitCount: number;
 	savedExitCount: number;
+	sessionDrinkCount: number;
+	savedDrinkCount: number;
 	onCenterGate: () => void;
 	onReset: () => void;
 }) {
@@ -1620,12 +1642,22 @@ function BarExitPanel({
 		"top_to_bottom",
 		"bottom_to_top",
 	];
-	const items: BarItemType[] = ["plate", "glass", "bottle", "can"];
 	const ready = modelStatus === "ready";
+	const drinksEnabled =
+		enabledBarItems.glass || enabledBarItems.bottle || enabledBarItems.can;
+	const toggleDrinks = () =>
+		setEnabledBarItems((current) => ({
+			...current,
+			glass: !drinksEnabled,
+			bottle: !drinksEnabled,
+			can: !drinksEnabled,
+		}));
+	const visibleDrinks = visibleDrinkTracks || visibleDrinkCandidates;
+	const modelLabel = modelDefinition?.label ?? "Modelo local";
 
 	return (
-		<div className="rounded-2xl border border-primary/25 bg-primary/5 p-4 text-sm">
-			<div className="mb-4 flex flex-col gap-3 rounded-xl border bg-background p-3 sm:flex-row sm:items-center sm:justify-between">
+		<div className="rounded-2xl border bg-background p-4 text-sm shadow-sm">
+			<div className="mb-4 flex flex-col gap-3 rounded-xl border bg-muted/30 p-3 sm:flex-row sm:items-center sm:justify-between">
 				<div className="flex items-start gap-3">
 					<div
 						className={
@@ -1641,8 +1673,8 @@ function BarExitPanel({
 						<div className="font-semibold">
 							{ready
 								? modelRuntime === "wasm"
-									? "Conteo listo (compatible)"
-									: "Conteo listo"
+									? "Control de bebidas listo (compatible)"
+									: "Control de bebidas listo"
 								: barModelStatusLabel(modelStatus, 0, modelRuntime)}
 						</div>
 						<div className="text-muted-foreground text-xs">
@@ -1683,26 +1715,31 @@ function BarExitPanel({
 					) : null}
 					{barRawModelLabels.length > 0 ? (
 						<div className="mt-2 rounded-lg border bg-background px-3 py-2 text-muted-foreground text-xs">
-							Ultimo modelo: {barRawModelLabels.join(", ")}
+							Último modelo: {barRawModelLabels.join(", ")}
 						</div>
 					) : null}
-					<div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
-						{items.map((item) => (
-							<Button
-								key={item}
-								type="button"
-								size="sm"
-								variant={enabledBarItems[item] ? "default" : "outline"}
-								onClick={() =>
-									setEnabledBarItems((current) => ({
-										...current,
-										[item]: !current[item],
-									}))
-								}
-							>
-								{itemLabel(item)}
-							</Button>
-						))}
+					<div className="mt-3 grid grid-cols-2 gap-2">
+						<Button
+							type="button"
+							size="sm"
+							variant={drinksEnabled ? "default" : "outline"}
+							onClick={toggleDrinks}
+						>
+							Bebidas
+						</Button>
+						<Button
+							type="button"
+							size="sm"
+							variant={enabledBarItems.plate ? "default" : "outline"}
+							onClick={() =>
+								setEnabledBarItems((current) => ({
+									...current,
+									plate: !current.plate,
+								}))
+							}
+						>
+							Platos
+						</Button>
 					</div>
 
 					<div className="mt-5 font-semibold text-base">
@@ -1726,11 +1763,13 @@ function BarExitPanel({
 				</div>
 
 				<div className="grid grid-cols-2 gap-2 text-center text-xs">
+					<SmallStat label="bebidas contadas" value={sessionDrinkCount} />
+					<SmallStat label="bebidas en pantalla" value={visibleDrinks} />
 					<SmallStat
 						label="candidatos del modelo"
 						value={barRawDetectionCount}
 					/>
-					<SmallStat label="objetos confirmados" value={barDetectionCount} />
+					<SmallStat label="objetos unidos" value={barDetectionCount} />
 					<SmallStat
 						label="tiempo por lectura"
 						value={inferenceMs === null ? "—" : `${inferenceMs} ms`}
@@ -1739,20 +1778,19 @@ function BarExitPanel({
 						label="seguimientos activos"
 						value={barTracks.filter((track) => track.misses === 0).length}
 					/>
-					<SmallStat label="cruces sesion" value={sessionExitCount} />
-					<SmallStat label="guardados hoy" value={savedExitCount} />
-					<SmallStat label="platos sesion" value={sessionExitSummary.plate} />
-					<SmallStat
-						label="vasos/copas sesion"
-						value={sessionExitSummary.glass}
-					/>
-					<SmallStat
-						label="botellas sesion"
-						value={sessionExitSummary.bottle}
-					/>
-					<SmallStat label="latas sesion" value={sessionExitSummary.can} />
+					<SmallStat label="cruces sesión" value={sessionExitCount} />
+					<SmallStat label="bebidas hoy" value={savedDrinkCount} />
+					<SmallStat label="cruces hoy" value={savedExitCount} />
+					<SmallStat label="platos sesión" value={sessionExitSummary.plate} />
 					<SmallStat label="platos hoy" value={savedExitSummary.plate} />
-					<SmallStat label="vasos hoy" value={savedExitSummary.glass} />
+					<div className="col-span-2 rounded-xl border bg-background px-3 py-2 text-left">
+						<div className="font-medium">{modelLabel}</div>
+						<div className="mt-1 text-muted-foreground">
+							{barRawModelLabels.length > 0
+								? barRawModelLabels.join(", ")
+								: "Sin lectura reciente del modelo."}
+						</div>
+					</div>
 					<Button
 						type="button"
 						variant="outline"
@@ -1823,7 +1861,7 @@ function ExitEventsTable({
 								{time ? new Date(time).toLocaleTimeString() : "-"}
 							</TableCell>
 							<TableCell>
-								<Badge variant="outline">{itemLabel(type)}</Badge>
+								<Badge variant="outline">{businessItemLabel(type)}</Badge>
 							</TableCell>
 							<TableCell className="font-mono text-xs">
 								{eventTrackId(event)}
@@ -1938,7 +1976,7 @@ function BarEngineStatus({
 					Preparando YOLO ({modelProgress}%)
 				</div>
 				<div className="mt-1 text-xs opacity-80">
-					Cargando modelo local para detectar botellas, vasos, copas y latas.
+					Cargando modelo local para detectar bebidas en la barra.
 				</div>
 			</div>
 		);
@@ -1961,7 +1999,7 @@ function BarEngineStatus({
 					: "Detector activo"}
 			</div>
 			<div className="flex flex-wrap gap-4 text-xs">
-				<span>{visibleObjects} objeto(s) confirmados</span>
+				<span>{visibleObjects} bebida(s) en pantalla</span>
 				<span>{activeTracks} seguimiento(s)</span>
 				{inferenceMs !== null ? <span>{inferenceMs} ms</span> : null}
 			</div>
@@ -2011,7 +2049,7 @@ function DetectionStatus({
 	if (!result) {
 		return (
 			<div className="rounded-xl border bg-muted p-3 text-muted-foreground text-sm">
-				Aun no hay lectura. Enciende la camara y espera a que el detector local
+				Aún no hay lectura. Enciende la cámara y espera a que el detector local
 				termine de cargar.
 			</div>
 		);
@@ -2288,6 +2326,18 @@ function summarizeExitEvents(events: ExitEventRow[]) {
 		summary[type] += 1;
 	}
 	return summary;
+}
+
+function drinkTotal(summary: Record<BarItemType, number>) {
+	return summary.glass + summary.bottle + summary.can;
+}
+
+function isDrinkItem(type: BarItemType) {
+	return type === "glass" || type === "bottle" || type === "can";
+}
+
+function businessItemLabel(type: BarItemType) {
+	return isDrinkItem(type) ? "Bebida" : itemLabel(type);
 }
 
 function eventType(event: ExitEventRow): BarItemType {

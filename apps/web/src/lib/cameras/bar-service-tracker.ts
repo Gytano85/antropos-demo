@@ -378,8 +378,8 @@ function isDuplicateTrackCandidate(track: BarTrack, candidate: BarCandidate) {
 	if (itemGroup(track.type) !== itemGroup(candidate.type)) return false;
 	const overlap = intersectionOverSmaller(track.bbox, candidate.bbox);
 	if (itemGroup(track.type) === "drink") {
-		if (overlap >= 0.42) return true;
-		if (intersectionOverUnion(track.bbox, candidate.bbox) >= 0.24) return true;
+		if (overlap >= 0.3) return true;
+		if (intersectionOverUnion(track.bbox, candidate.bbox) >= 0.16) return true;
 		const distance = pointDistance(track.center, bboxCenter(candidate.bbox));
 		const size = Math.max(
 			track.bbox[2],
@@ -388,7 +388,7 @@ function isDuplicateTrackCandidate(track: BarTrack, candidate: BarCandidate) {
 			candidate.bbox[3],
 			1,
 		);
-		return distance / size <= 0.32;
+		return distance / size <= 0.5;
 	}
 	return overlap >= 0.72;
 }

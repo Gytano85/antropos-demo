@@ -254,10 +254,10 @@ function suppressNearDuplicates(candidates: BarCandidate[]) {
 		const duplicate = kept.some((current) => {
 			const overlap = intersectionOverSmaller(current.bbox, candidate.bbox);
 			if (isDrink(current.type) && isDrink(candidate.type)) {
-				if (overlap >= 0.52) return true;
-				if (intersectionOverUnion(current.bbox, candidate.bbox) >= 0.28)
+				if (overlap >= 0.34) return true;
+				if (intersectionOverUnion(current.bbox, candidate.bbox) >= 0.18)
 					return true;
-				return centerDistanceRatio(current.bbox, candidate.bbox) <= 0.28;
+				return centerDistanceRatio(current.bbox, candidate.bbox) <= 0.46;
 			}
 			if (overlap < 0.9) return false;
 			if (current.type === candidate.type) return true;
