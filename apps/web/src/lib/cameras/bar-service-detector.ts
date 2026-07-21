@@ -6,6 +6,23 @@ import type {
 
 export const BAR_MODEL_ID = "Xenova/owlv2-base-patch16-ensemble";
 
+/**
+ * Clases del modelo "Beverage Containers" (YOLOv8n, 15.6k imagenes).
+ * El orden define el indice de cada clase en la salida ONNX: debe coincidir
+ * exactamente con el `names` del data.yaml que acompana a los pesos.
+ */
+export const BEVERAGE_MODEL_CLASSES = [
+	"bottle-glass",
+	"bottle-plastic",
+	"cup-disposable",
+	"cup-handle",
+	"glass-mug",
+	"glass-normal",
+	"glass-wine",
+	"gym bottle",
+	"tin can",
+] as const;
+
 export const BAR_MODEL_LABELS = [
 	"a plate with food",
 	"a dinner plate",
@@ -71,6 +88,7 @@ const POSITIVE_LABELS = new Map<string, BarItemType>([
 	["a bowl with food", "plate"],
 	["a serving tray with food", "plate"],
 	["bowl", "plate"],
+	["frisbee", "plate"],
 	["a drinking glass", "glass"],
 	["a wine glass", "glass"],
 	["a cup with a drink", "glass"],
@@ -83,6 +101,16 @@ const POSITIVE_LABELS = new Map<string, BarItemType>([
 	["a beverage can", "can"],
 	["a beer can", "can"],
 	["a soda can", "can"],
+	// Modelo Beverage Containers.
+	["bottle-glass", "bottle"],
+	["bottle-plastic", "bottle"],
+	["gym bottle", "bottle"],
+	["tin can", "can"],
+	["glass-mug", "glass"],
+	["glass-normal", "glass"],
+	["glass-wine", "glass"],
+	["cup-disposable", "glass"],
+	["cup-handle", "glass"],
 ]);
 
 const NEGATIVE_LABELS = new Set<string>(

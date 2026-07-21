@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import {
 	type BarModelDetection,
+	BEVERAGE_MODEL_CLASSES,
 	candidatesFromCocoDetections,
 	candidatesFromOwlDetections,
 } from "../../../cameras/bar-service-detector";
@@ -82,6 +83,39 @@ describe("bar service OWLv2 post-processing", () => {
 
 		expect(candidates).toHaveLength(1);
 		expect(candidates[0]?.type).toBe("glass");
+	});
+
+	it("maps every Beverage Containers class to a bar item type", () => {
+		const expected: Record<string, string> = {
+			"bottle-glass": "bottle",
+			"bottle-plastic": "bottle",
+			"gym bottle": "bottle",
+			"tin can": "can",
+			"glass-mug": "glass",
+			"glass-normal": "glass",
+			"glass-wine": "glass",
+			"cup-disposable": "glass",
+			"cup-handle": "glass",
+		};
+
+		for (const modelClass of BEVERAGE_MODEL_CLASSES) {
+			const candidates = candidatesFromCocoDetections(
+				[{ class: modelClass, score: 0.62, bbox: [120, 90, 90, 130] }],
+				frame,
+			);
+			expect(candidates).toHaveLength(1);
+			expect(candidates[0]?.type).toBe(expected[modelClass] as never);
+		}
+	});
+
+	it("treats a COCO frisbee as a plate candidate", () => {
+		const candidates = candidatesFromCocoDetections(
+			[{ class: "frisbee", score: 0.55, bbox: [220, 180, 190, 100] }],
+			frame,
+		);
+
+		expect(candidates).toHaveLength(1);
+		expect(candidates[0]?.type).toBe("plate");
 	});
 });
 

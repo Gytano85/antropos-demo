@@ -103,7 +103,59 @@ describe("bar service tracker", () => {
 		expect(result.tracks).toHaveLength(0);
 		expect(result.events).toHaveLength(0);
 	});
+
+	it("counts a drink once even when the model flips between glass and bottle", () => {
+		let tracks: BarTrack[] = [];
+		const events = [];
+		const xs = [300, 350, 420, 480, 550, 620, 680];
+		// El detector alterna de clase sobre el mismo objeto fisico.
+		const types: BarCandidate["type"][] = [
+			"glass",
+			"glass",
+			"bottle",
+			"glass",
+			"bottle",
+			"bottle",
+			"glass",
+		];
+		for (let index = 0; index < xs.length; index += 1) {
+			const result = updateBarTracks(
+				tracks,
+				[drinkCandidate(xs[index] ?? 0, 300, types[index] ?? "glass")],
+				{ ...options, now: index * 250 },
+			);
+			tracks = result.tracks;
+			events.push(...result.events);
+		}
+		expect(events).toHaveLength(1);
+		expect(tracks).toHaveLength(1);
+	});
+
+	it("keeps a plate and a drink on separate tracks", () => {
+		const result = updateBarTracks(
+			[],
+			[drinkCandidate(300, 300, "glass"), drinkCandidate(300, 300, "plate")],
+			{ ...options, now: 0 },
+		);
+		expect(result.tracks).toHaveLength(2);
+	});
 });
+
+function drinkCandidate(
+	centerX: number,
+	centerY: number,
+	type: BarCandidate["type"],
+	confidence = 0.36,
+): BarCandidate {
+	return {
+		type,
+		confidence,
+		label: type,
+		support: 2,
+		bbox: [centerX - 55, centerY - 35, 110, 70],
+		appearance: [0.4, 0.3, 0.2],
+	};
+}
 
 function candidate(
 	centerX: number,

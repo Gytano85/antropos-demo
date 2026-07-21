@@ -1,5 +1,16 @@
 export type BarItemType = "plate" | "glass" | "bottle" | "can";
 
+export type BarItemGroup = "drink" | "food";
+
+/**
+ * Los recipientes de bebida se cuentan como un solo grupo. El detector alterna
+ * con frecuencia entre vaso/botella/lata sobre el mismo objeto, y separarlos
+ * rompia el track y lo contaba dos veces.
+ */
+export function itemGroup(type: BarItemType): BarItemGroup {
+	return type === "plate" ? "food" : "drink";
+}
+
 export type CountingDirection =
 	| "left_to_right"
 	| "right_to_left"
@@ -368,7 +379,10 @@ function matchCost(
 	candidate: BarCandidate,
 	options: TrackingOptions,
 ) {
-	if (track.type !== candidate.type) return Number.POSITIVE_INFINITY;
+	if (itemGroup(track.type) !== itemGroup(candidate.type)) {
+		return Number.POSITIVE_INFINITY;
+	}
+	const typeSwitchCost = track.type === candidate.type ? 0 : 0.14;
 	const elapsed = Math.max(1, options.now - track.lastSeenAt);
 	const predicted = {
 		x: track.center.x + track.velocity.x * Math.min(elapsed, 1_500),
@@ -400,7 +414,8 @@ function matchCost(
 		(distance / Math.max(1, maxDistance)) * 0.42 +
 		(1 - overlap) * 0.24 +
 		relativeSizeDifference(track.bbox, candidate.bbox) * 0.16 +
-		appearanceCost * 0.18
+		appearanceCost * 0.18 +
+		typeSwitchCost
 	);
 }
 

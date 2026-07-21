@@ -76,3 +76,7 @@ apps/docs/.source/
 
 # Manual fiscal test scripts (contain sensitive data)
 packages/fiscal/src/manual-*.ts
+
+# Binarios del detector de camara (regenerables con: bun run cameras:setup)
+apps/web/public/ort/
+apps/web/public/models/

@@ -35,6 +35,8 @@ export async function proxy(request: NextRequest) {
 
 export const config = {
 	matcher: [
-		"/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+		// `models` y `ort` son binarios estaticos del detector de camara: no
+		// necesitan sesion y son demasiado pesados para pasar por el middleware.
+		"/((?!_next/static|_next/image|favicon.ico|models/|ort/|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
 	],
 };

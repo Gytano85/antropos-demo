@@ -42,12 +42,10 @@ import type React from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
-	BAR_MODEL_ID,
-	BAR_MODEL_LABELS,
-	type BarModelDetection,
-	candidatesFromCocoDetections,
-	candidatesFromOwlDetections,
-} from "@/lib/cameras/bar-service-detector";
+	type BarModelDefinition,
+	resolveAvailableBarModel,
+} from "@/lib/cameras/bar-models";
+import { candidatesFromCocoDetections } from "@/lib/cameras/bar-service-detector";
 import {
 	type BarExitEvent,
 	type BarItemType,
@@ -67,6 +65,10 @@ import {
 	type PresenceSample,
 	type PresenceState,
 } from "@/lib/cameras/presence-engine";
+import {
+	createYoloSession,
+	type YoloSession,
+} from "@/lib/cameras/yolo-onnx-runtime";
 import { useTRPC } from "@/lib/trpc/client";
 
 type DetectionResult = {
@@ -87,19 +89,7 @@ type DetectionResult = {
 
 type CameraMode = "presence" | "bar_exit";
 type BarModelStatus = "idle" | "loading" | "ready" | "unsupported" | "error";
-type BarModelRuntime = "webgpu" | "wasm" | "coco";
-type BarModelDetector = (
-	image: string,
-	candidateLabels: string[],
-	options: { threshold: number; top_k: number },
-) => Promise<BarModelDetection[]>;
-type TransformersPipeline = (
-	task: string,
-	model: string,
-	options: Record<string, unknown>,
-) => Promise<unknown>;
-const TRANSFORMERS_CDN_URL =
-	"https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.2.0";
+type BarModelRuntime = "webgpu" | "wasm";
 
 export default function CamerasPage() {
 	const trpc = useTRPC();
@@ -110,10 +100,9 @@ export default function CamerasPage() {
 	const overlayCanvasRef = useRef<HTMLCanvasElement | null>(null);
 	const barModelCanvasRef = useRef<HTMLCanvasElement | null>(null);
 	const barModelBusyRef = useRef(false);
-	const barModelDetectorRef = useRef<BarModelDetector | null>(null);
-	const barModelDetectorPromiseRef = useRef<Promise<BarModelDetector> | null>(
-		null,
-	);
+	const barYoloSessionRef = useRef<YoloSession | null>(null);
+	const barYoloSessionPromiseRef = useRef<Promise<YoloSession> | null>(null);
+	const barModelDefinitionRef = useRef<BarModelDefinition | null>(null);
 	const barModelRuntimeRef = useRef<BarModelRuntime | null>(null);
 	const gateDraggingRef = useRef(false);
 	const streamRef = useRef<MediaStream | null>(null);
@@ -169,6 +158,8 @@ export default function CamerasPage() {
 	const [barModelProgress, setBarModelProgress] = useState(0);
 	const [barModelRuntime, setBarModelRuntime] =
 		useState<BarModelRuntime | null>(null);
+	const [barModelDefinition, setBarModelDefinition] =
+		useState<BarModelDefinition | null>(null);
 	const lastBarModelAtRef = useRef(0);
 	const barSessionIdRef = useRef(createVisionSessionId());
 	const loadedBarConfigForRef = useRef<number | null>(null);
@@ -338,63 +329,34 @@ export default function CamerasPage() {
 		return objectDetectorPromiseRef.current;
 	}, []);
 
-	const getBarFallbackDetector = useCallback(async () => {
-		const detector = await getObjectDetector();
-		barModelDetectorRef.current = null;
-		barModelDetectorPromiseRef.current = null;
-		barModelRuntimeRef.current = "coco";
-		setBarModelRuntime("coco");
-		setBarModelProgress(100);
-		setBarModelStatus("ready");
-		return detector;
-	}, [getObjectDetector]);
-
-	const getBarModelDetector = useCallback(
-		async (forceCompatible = false) => {
-			if (forceCompatible) {
-				barModelDetectorRef.current = null;
-				barModelDetectorPromiseRef.current = null;
+	const getBarModelDetector = useCallback(async () => {
+		if (barYoloSessionRef.current) return barYoloSessionRef.current;
+		if (!barYoloSessionPromiseRef.current) {
+			setBarModelStatus("loading");
+			setBarModelProgress(0);
+			barYoloSessionPromiseRef.current = (async () => {
+				const definition = await resolveAvailableBarModel();
+				setBarModelProgress(35);
+				const session = await createYoloSession(definition, (backend) => {
+					barModelRuntimeRef.current = backend;
+					setBarModelRuntime(backend);
+				});
+				barYoloSessionRef.current = session;
+				barModelDefinitionRef.current = definition;
+				setBarModelDefinition(definition);
+				setBarModelProgress(100);
+				setBarModelStatus("ready");
+				return session;
+			})().catch((error) => {
+				barYoloSessionPromiseRef.current = null;
 				barModelRuntimeRef.current = null;
 				setBarModelRuntime(null);
-			}
-			if (barModelDetectorRef.current) return barModelDetectorRef.current;
-			if (!barModelDetectorPromiseRef.current) {
-				const gpuAvailable = Boolean(
-					(navigator as Navigator & { gpu?: unknown }).gpu,
-				);
-				setBarModelStatus("loading");
-				setBarModelProgress(0);
-				barModelDetectorPromiseRef.current = (async () => {
-					const moduleUrl = TRANSFORMERS_CDN_URL;
-					const { pipeline } = (await import(
-						/* webpackIgnore: true */ moduleUrl
-					)) as {
-						pipeline: TransformersPipeline;
-					};
-					const { detector, runtime } = await loadBarModelWithFallback({
-						pipeline,
-						gpuAvailable: gpuAvailable && !forceCompatible,
-						onProgress: setBarModelProgress,
-					});
-					barModelDetectorRef.current = detector;
-					barModelRuntimeRef.current = runtime;
-					setBarModelRuntime(runtime);
-					setBarModelProgress(100);
-					setBarModelStatus("ready");
-					return detector;
-				})().catch(async () => {
-					barModelDetectorPromiseRef.current = null;
-					barModelRuntimeRef.current = null;
-					setBarModelRuntime(null);
-					await getBarFallbackDetector();
-					const fallbackDetector: BarModelDetector = async () => [];
-					return fallbackDetector;
-				});
-			}
-			return barModelDetectorPromiseRef.current;
-		},
-		[getBarFallbackDetector],
-	);
+				setBarModelStatus("error");
+				throw error;
+			});
+		}
+		return barYoloSessionPromiseRef.current;
+	}, []);
 
 	const stopCamera = useCallback(() => {
 		for (const track of streamRef.current?.getTracks() ?? []) {
@@ -642,8 +604,7 @@ export default function CamerasPage() {
 			}
 			if (
 				barModelStatus !== "ready" ||
-				(barModelRuntimeRef.current !== "coco" &&
-					!barModelDetectorRef.current) ||
+				!barYoloSessionRef.current ||
 				barModelBusyRef.current ||
 				now - lastBarModelAtRef.current < 500
 			) {
@@ -679,42 +640,18 @@ export default function CamerasPage() {
 				);
 				const scaleX = crop.width / modelCanvas.width;
 				const scaleY = crop.height / modelCanvas.height;
-				let rawModelLabels: string[] = [];
-				const baseCandidates =
-					barModelRuntimeRef.current === "coco"
-						? await getObjectDetector().then(async (detector) => {
-								const raw = (await detector.detect(modelCanvas)) as Array<{
-									class: string;
-									score: number;
-									bbox: BoundingBox;
-								}>;
-								rawModelLabels = raw
-									.slice(0, 5)
-									.map(
-										(item) => `${item.class} ${Math.round(item.score * 100)}%`,
-									);
-								return candidatesFromCocoDetections(raw, {
-									width: modelCanvas.width,
-									height: modelCanvas.height,
-								});
-							})
-						: candidatesFromOwlDetections(
-								await runOwlBarDetector({
-									detector: barModelDetectorRef.current,
-									modelCanvas,
-									getBarModelDetector,
-									getBarFallbackDetector,
-									setBarModelRuntime,
-									setBarModelStatus,
-									runtimeRef: barModelRuntimeRef,
-									detectorRef: barModelDetectorRef,
-									detectorPromiseRef: barModelDetectorPromiseRef,
-								}),
-								{
-									width: modelCanvas.width,
-									height: modelCanvas.height,
-								},
-							);
+				const modelFrame = {
+					width: modelCanvas.width,
+					height: modelCanvas.height,
+				};
+				const raw = await barYoloSessionRef.current.detect(
+					modelCanvas,
+					modelFrame,
+				);
+				const rawModelLabels = raw
+					.slice(0, 5)
+					.map((item) => `${item.class} ${Math.round(item.score * 100)}%`);
+				const baseCandidates = candidatesFromCocoDetections(raw, modelFrame);
 				const candidates = baseCandidates
 					.filter((candidate) => enabledBarItems[candidate.type])
 					.map((candidate) => {
@@ -800,9 +737,7 @@ export default function CamerasPage() {
 			drawDetections,
 			draft.location,
 			enabledBarItems,
-			getBarFallbackDetector,
 			getBarModelDetector,
-			getObjectDetector,
 			mutateBarExit,
 			selected,
 		],
@@ -1264,6 +1199,7 @@ export default function CamerasPage() {
 								barTracks={confirmedBarTracks}
 								modelStatus={barModelStatus}
 								modelRuntime={barModelRuntime}
+								modelDefinition={barModelDefinition}
 								inferenceMs={barInferenceMs}
 								sessionExitSummary={sessionExitSummary}
 								savedExitSummary={savedExitSummary}
@@ -1646,6 +1582,7 @@ function BarExitPanel({
 	barTracks,
 	modelStatus,
 	modelRuntime,
+	modelDefinition,
 	inferenceMs,
 	sessionExitSummary,
 	savedExitSummary,
@@ -1666,6 +1603,7 @@ function BarExitPanel({
 	barTracks: BarTrack[];
 	modelStatus: BarModelStatus;
 	modelRuntime: BarModelRuntime | null;
+	modelDefinition: BarModelDefinition | null;
 	inferenceMs: number | null;
 	sessionExitSummary: Record<BarItemType, number>;
 	savedExitSummary: Record<BarItemType, number>;
@@ -1700,7 +1638,7 @@ function BarExitPanel({
 					<div>
 						<div className="font-semibold">
 							{ready
-								? modelRuntime === "wasm" || modelRuntime === "coco"
+								? modelRuntime === "wasm"
 									? "Conteo listo (compatible)"
 									: "Conteo listo"
 								: barModelStatusLabel(modelStatus, 0, modelRuntime)}
@@ -1728,6 +1666,19 @@ function BarExitPanel({
 						Las propuestas débiles se descartan y un objeto necesita varias
 						lecturas coherentes antes de aparecer.
 					</div>
+					{modelDefinition ? (
+						<div className="mt-2 rounded-lg border bg-background px-3 py-2 text-xs">
+							<span className="font-medium">
+								Modelo: {modelDefinition.label}
+							</span>
+							{modelDefinition.id === "coco" ? (
+								<span className="ml-1 text-amber-600 dark:text-amber-400">
+									— genérico, no distingue latas. Copia beverage-containers.onnx
+									en /public/models para mejorarlo.
+								</span>
+							) : null}
+						</div>
+					) : null}
 					{barRawModelLabels.length > 0 ? (
 						<div className="mt-2 rounded-lg border bg-background px-3 py-2 text-muted-foreground text-xs">
 							Ultimo modelo: {barRawModelLabels.join(", ")}
@@ -2004,7 +1955,7 @@ function BarEngineStatus({
 		<div className="flex flex-col gap-2 rounded-xl border border-emerald-300/50 bg-emerald-50 p-3 text-emerald-950 text-sm sm:flex-row sm:items-center sm:justify-between dark:bg-emerald-950/25 dark:text-emerald-100">
 			<div className="flex items-center gap-2 font-medium">
 				<CheckCircle2Icon className="h-4 w-4" />
-				{modelRuntime === "wasm" || modelRuntime === "coco"
+				{modelRuntime === "wasm"
 					? "Detector activo en modo compatible"
 					: "Detector activo"}
 			</div>
@@ -2221,148 +2172,13 @@ function colorSignature(
 	}
 }
 
-function modelFileProgress(event: unknown) {
-	if (!event || typeof event !== "object") return null;
-	const progressEvent = event as {
-		progress?: unknown;
-		total?: unknown;
-		file?: unknown;
-		name?: unknown;
-	};
-	if (typeof progressEvent.progress !== "number") return null;
-	const total =
-		typeof progressEvent.total === "number" ? progressEvent.total : 0;
-	const file = String(progressEvent.file ?? progressEvent.name ?? "");
-	if (total < 20_000_000 && !/\.onnx(?:_data)?$/i.test(file)) return null;
-	return Math.max(0, Math.min(100, Math.round(progressEvent.progress)));
-}
-
-async function loadBarModelWithFallback({
-	pipeline,
-	gpuAvailable,
-	onProgress,
-}: {
-	pipeline: TransformersPipeline;
-	gpuAvailable: boolean;
-	onProgress: (progress: number) => void;
-}): Promise<{ detector: BarModelDetector; runtime: BarModelRuntime }> {
-	const attempts: Array<{
-		runtime: BarModelRuntime;
-		label: string;
-		options: Record<string, unknown>;
-	}> = [
-		...(gpuAvailable
-			? [
-					{
-						runtime: "webgpu" as const,
-						label: "WebGPU",
-						options: { device: "webgpu", dtype: "q4" },
-					},
-				]
-			: []),
-		{
-			runtime: "wasm",
-			label: "WASM q8",
-			options: { dtype: "q8" },
-		},
-		{
-			runtime: "wasm",
-			label: "WASM q4",
-			options: { dtype: "q4" },
-		},
-	];
-	const errors: string[] = [];
-
-	for (const attempt of attempts) {
-		try {
-			const loaded = await pipeline(
-				"zero-shot-object-detection",
-				BAR_MODEL_ID,
-				{
-					...attempt.options,
-					progress_callback: (event: unknown) => {
-						const progress = modelFileProgress(event);
-						if (progress !== null) onProgress(progress);
-					},
-				},
-			);
-			return {
-				detector: loaded as unknown as BarModelDetector,
-				runtime: attempt.runtime,
-			};
-		} catch (error) {
-			errors.push(
-				`${attempt.label}: ${
-					error instanceof Error ? error.message : String(error)
-				}`,
-			);
-		}
-	}
-
-	throw new Error(errors.join(" | "));
-}
-
-async function runOwlBarDetector({
-	detector,
-	modelCanvas,
-	getBarModelDetector,
-	getBarFallbackDetector,
-	setBarModelRuntime,
-	setBarModelStatus,
-	runtimeRef,
-	detectorRef,
-	detectorPromiseRef,
-}: {
-	detector: BarModelDetector | null;
-	modelCanvas: HTMLCanvasElement;
-	getBarModelDetector: (forceCompatible?: boolean) => Promise<BarModelDetector>;
-	getBarFallbackDetector: () => Promise<ObjectDetection>;
-	setBarModelRuntime: (runtime: BarModelRuntime | null) => void;
-	setBarModelStatus: (status: BarModelStatus) => void;
-	runtimeRef: React.MutableRefObject<BarModelRuntime | null>;
-	detectorRef: React.MutableRefObject<BarModelDetector | null>;
-	detectorPromiseRef: React.MutableRefObject<Promise<BarModelDetector> | null>;
-}): Promise<BarModelDetection[]> {
-	if (!detector) {
-		await getBarFallbackDetector();
-		return [];
-	}
-	const modelInput = modelCanvas.toDataURL("image/jpeg", 0.92);
-	try {
-		return await detector(modelInput, [...BAR_MODEL_LABELS], {
-			threshold: 0.07,
-			top_k: 80,
-		});
-	} catch {
-		if (runtimeRef.current === "webgpu") {
-			detectorRef.current = null;
-			detectorPromiseRef.current = null;
-			runtimeRef.current = null;
-			setBarModelRuntime(null);
-			setBarModelStatus("loading");
-			try {
-				const compatibleDetector = await getBarModelDetector(true);
-				return await compatibleDetector(modelInput, [...BAR_MODEL_LABELS], {
-					threshold: 0.07,
-					top_k: 80,
-				});
-			} catch {
-				await getBarFallbackDetector();
-				return [];
-			}
-		}
-		await getBarFallbackDetector();
-		return [];
-	}
-}
-
 function barModelStatusLabel(
 	status: BarModelStatus,
 	progress: number,
 	runtime?: BarModelRuntime | null,
 ) {
 	if (status === "ready")
-		return runtime === "wasm" || runtime === "coco"
+		return runtime === "wasm"
 			? "Detector listo (compatible)"
 			: "Detector listo";
 	if (status === "loading") return `Preparando detector ${progress}%`;
