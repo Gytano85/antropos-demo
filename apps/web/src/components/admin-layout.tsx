@@ -194,7 +194,7 @@ export function AdminLayout({ children }: { children: React.ReactNode }) {
 					className="flex items-center gap-2 font-semibold text-lg"
 				>
 					<Package2Icon className="h-6 w-6" />
-					<span>{appSettings?.company_title ?? "Antro POS"}</span>
+					<span>{appSettings?.company_title ?? "APOS by Blinder"}</span>
 				</Link>
 				<div className="ml-auto flex items-center gap-2">
 					<Button
@@ -240,7 +240,7 @@ export function AdminLayout({ children }: { children: React.ReactNode }) {
 								onClick={() => setMobileMenuOpen(false)}
 							>
 								<Package2Icon className="h-6 w-6" />
-								<span>{appSettings?.company_title ?? "Antro POS"}</span>
+								<span>{appSettings?.company_title ?? "APOS by Blinder"}</span>
 							</Link>
 							<Button
 								variant="ghost"

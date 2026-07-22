@@ -44,6 +44,14 @@ type TabId = (typeof tabs)[number]["id"];
 
 const palettes = [
 	{
+		name: "Azul ejecutivo", // paleta por defecto del sistema
+		primary_color: "#1e3a8a",
+		accent_color: "#0ea5e9",
+		background_color: "#f8fafc",
+		card_color: "#ffffff",
+		text_color: "#0f172a",
+	},
+	{
 		name: "Original blanco y negro",
 		primary_color: "#111827",
 		accent_color: "#f3f4f6",
@@ -66,14 +74,6 @@ const palettes = [
 		background_color: "#111827",
 		card_color: "#1f2937",
 		text_color: "#f9fafb",
-	},
-	{
-		name: "Azul ejecutivo",
-		primary_color: "#1e3a8a",
-		accent_color: "#0ea5e9",
-		background_color: "#f8fafc",
-		card_color: "#ffffff",
-		text_color: "#0f172a",
 	},
 	{
 		name: "Vino club",
@@ -107,12 +107,12 @@ export default function SettingsPage() {
 	const { data: products = [] } = useQuery(trpc.products.list.queryOptions());
 
 	const [form, setForm] = useState({
-		company_title: "Antro POS",
-		primary_color: "#111827",
-		accent_color: "#f3f4f6",
-		background_color: "#ffffff",
+		company_title: "APOS by Blinder",
+		primary_color: "#1e3a8a",
+		accent_color: "#0ea5e9",
+		background_color: "#f8fafc",
 		card_color: "#ffffff",
-		text_color: "#111827",
+		text_color: "#0f172a",
 	});
 
 	useEffect(() => {

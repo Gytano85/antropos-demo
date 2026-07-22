@@ -1,7 +1,12 @@
 "use client";
 
 import { Button } from "@finopenpos/ui/components/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@finopenpos/ui/components/card";
+import {
+	Card,
+	CardContent,
+	CardHeader,
+	CardTitle,
+} from "@finopenpos/ui/components/card";
 import { Input } from "@finopenpos/ui/components/input";
 import { Label } from "@finopenpos/ui/components/label";
 import {
@@ -11,7 +16,12 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from "@finopenpos/ui/components/select";
-import { CheckCircle2Icon, Loader2Icon, MapPinIcon, XCircleIcon } from "lucide-react";
+import {
+	CheckCircle2Icon,
+	Loader2Icon,
+	MapPinIcon,
+	XCircleIcon,
+} from "lucide-react";
 import { useParams, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
@@ -33,45 +43,52 @@ export default function EmployeeCheckinPage() {
 	const params = useParams<{ token: string }>();
 	const search = useSearchParams();
 	const token = params.token;
-	const purpose = (search.get("purpose") === "check_out" ? "check_out" : "check_in") as
-		| "check_in"
-		| "check_out";
+	const purpose = (
+		search.get("purpose") === "check_out" ? "check_out" : "check_in"
+	) as "check_in" | "check_out";
 	const [info, setInfo] = useState<TokenInfo | null>(null);
 	const [employeeId, setEmployeeId] = useState("");
 	const [pin, setPin] = useState("");
 	const [loading, setLoading] = useState(true);
 	const [submitting, setSubmitting] = useState(false);
-	const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null);
+	const [result, setResult] = useState<{ ok: boolean; message: string } | null>(
+		null,
+	);
 
 	useEffect(() => {
 		fetch(`/api/attendance/token/${token}`)
 			.then((r) => r.json())
 			.then((data) => setInfo(data))
-			.catch(() => setInfo({ ok: false, message: "No se pudo leer el QR." } as TokenInfo))
+			.catch(() =>
+				setInfo({ ok: false, message: "No se pudo leer el QR." } as TokenInfo),
+			)
 			.finally(() => setLoading(false));
 	}, [token]);
 
 	const selectedEmployee = useMemo(
-		() => info?.employees.find((employee) => String(employee.id) === employeeId),
+		() =>
+			info?.employees.find((employee) => String(employee.id) === employeeId),
 		[employeeId, info?.employees],
 	);
 
 	const getLocation = () =>
-		new Promise<{ latitude: number | null; longitude: number | null }>((resolve) => {
-			if (!info?.settings?.requireLocation || !navigator.geolocation) {
-				resolve({ latitude: null, longitude: null });
-				return;
-			}
-			navigator.geolocation.getCurrentPosition(
-				(pos) =>
-					resolve({
-						latitude: pos.coords.latitude,
-						longitude: pos.coords.longitude,
-					}),
-				() => resolve({ latitude: null, longitude: null }),
-				{ enableHighAccuracy: true, timeout: 10000 },
-			);
-		});
+		new Promise<{ latitude: number | null; longitude: number | null }>(
+			(resolve) => {
+				if (!info?.settings?.requireLocation || !navigator.geolocation) {
+					resolve({ latitude: null, longitude: null });
+					return;
+				}
+				navigator.geolocation.getCurrentPosition(
+					(pos) =>
+						resolve({
+							latitude: pos.coords.latitude,
+							longitude: pos.coords.longitude,
+						}),
+					() => resolve({ latitude: null, longitude: null }),
+					{ enableHighAccuracy: true, timeout: 10000 },
+				);
+			},
+		);
 
 	const submit = async () => {
 		setResult(null);
@@ -100,7 +117,7 @@ export default function EmployeeCheckinPage() {
 			message:
 				response.ok && data.ok
 					? `${purpose === "check_in" ? "Entrada" : "Salida"} registrada: ${data.status}`
-					: data.message ?? "No se pudo registrar.",
+					: (data.message ?? "No se pudo registrar."),
 		});
 	};
 
@@ -109,10 +126,12 @@ export default function EmployeeCheckinPage() {
 			<Card className="w-full max-w-md border-slate-800 bg-white text-slate-950">
 				<CardHeader>
 					<CardTitle>
-						{purpose === "check_in" ? "Check-in de empleado" : "Check-out de empleado"}
+						{purpose === "check_in"
+							? "Check-in de empleado"
+							: "Check-out de empleado"}
 					</CardTitle>
 					<p className="text-muted-foreground text-sm">
-						{info?.settings?.locationName ?? "Antro POS"} · QR temporal
+						{info?.settings?.locationName ?? "APOS by Blinder"} · QR temporal
 					</p>
 				</CardHeader>
 				<CardContent className="space-y-4">
@@ -158,16 +177,20 @@ export default function EmployeeCheckinPage() {
 							{info.settings?.requireLocation && (
 								<div className="flex items-center gap-2 rounded-lg border bg-slate-50 p-3 text-sm">
 									<MapPinIcon className="h-4 w-4" />
-									Se validara que estes dentro de {info.settings.allowedRadiusMeters} m.
+									Se validara que estes dentro de{" "}
+									{info.settings.allowedRadiusMeters} m.
 								</div>
 							)}
 							{selectedEmployee && (
 								<p className="text-muted-foreground text-sm">
-									Registrando a {selectedEmployee.name} como {selectedEmployee.role}.
+									Registrando a {selectedEmployee.name} como{" "}
+									{selectedEmployee.role}.
 								</p>
 							)}
 							<Button className="w-full" onClick={submit} disabled={submitting}>
-								{submitting && <Loader2Icon className="mr-2 h-4 w-4 animate-spin" />}
+								{submitting && (
+									<Loader2Icon className="mr-2 h-4 w-4 animate-spin" />
+								)}
 								{purpose === "check_in" ? "Marcar entrada" : "Marcar salida"}
 							</Button>
 							{result && (
@@ -178,7 +201,11 @@ export default function EmployeeCheckinPage() {
 											: "border-red-200 bg-red-50 text-red-700"
 									}`}
 								>
-									{result.ok ? <CheckCircle2Icon className="h-5 w-5" /> : <XCircleIcon className="h-5 w-5" />}
+									{result.ok ? (
+										<CheckCircle2Icon className="h-5 w-5" />
+									) : (
+										<XCircleIcon className="h-5 w-5" />
+									)}
 									{result.message}
 								</div>
 							)}

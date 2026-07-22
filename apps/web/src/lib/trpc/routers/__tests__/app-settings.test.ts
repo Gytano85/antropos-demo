@@ -20,7 +20,7 @@ beforeAll(async () => {
 describe("appSettings", () => {
 	it("creates defaults on first read", async () => {
 		const settings = await centro.get();
-		expect(settings.company_title).toBe("Antro POS");
+		expect(settings.company_title).toBe("APOS by Blinder");
 		expect(settings.user_uid).toBe("scope-centro");
 	});
 

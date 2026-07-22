@@ -58,7 +58,9 @@ export const branches = pgTable(
 			.notNull()
 			.default("America/Mexico_City"),
 		status: varchar("status", { length: 20 }).notNull().default("active"),
-		data_scope_uid: varchar("data_scope_uid", { length: 255 }).notNull().unique(),
+		data_scope_uid: varchar("data_scope_uid", { length: 255 })
+			.notNull()
+			.unique(),
 		created_at: timestamp("created_at").defaultNow(),
 		updated_at: timestamp("updated_at").defaultNow(),
 	},
@@ -135,22 +137,23 @@ export const appSettings = pgTable("app_settings", {
 	user_uid: varchar("user_uid", { length: 255 }).notNull().unique(),
 	company_title: varchar("company_title", { length: 120 })
 		.notNull()
-		.default("Antro POS"),
+		.default("APOS by Blinder"),
+	// Paleta "Azul ejecutivo": identidad por defecto del sistema.
 	primary_color: varchar("primary_color", { length: 20 })
 		.notNull()
-		.default("#111827"),
+		.default("#1e3a8a"),
 	accent_color: varchar("accent_color", { length: 20 })
 		.notNull()
-		.default("#f59e0b"),
+		.default("#0ea5e9"),
 	background_color: varchar("background_color", { length: 20 })
 		.notNull()
-		.default("#ffffff"),
+		.default("#f8fafc"),
 	card_color: varchar("card_color", { length: 20 })
 		.notNull()
 		.default("#ffffff"),
 	text_color: varchar("text_color", { length: 20 })
 		.notNull()
-		.default("#111827"),
+		.default("#0f172a"),
 	created_at: timestamp("created_at").defaultNow(),
 	updated_at: timestamp("updated_at").defaultNow(),
 });
