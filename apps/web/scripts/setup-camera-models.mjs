@@ -73,6 +73,12 @@ async function firstExistingPath(paths) {
 async function downloadBaseModel() {
 	await mkdir(modelsPublic, { recursive: true });
 	const target = join(modelsPublic, BASE_MODEL.file);
+	// El de 416 px viaja en el repo y es el preferido; bajar ademas el de 640 px
+	// solo anadiria 13 MB al build para un respaldo que no se usaria.
+	if (await exists(join(modelsPublic, "yolov8n-416.onnx"))) {
+		console.log("✓ yolov8n-416.onnx presente, se omite el modelo de 640 px");
+		return;
+	}
 	if (await exists(target)) {
 		console.log(`✓ ${BASE_MODEL.file} ya existe, se omite la descarga`);
 		return;

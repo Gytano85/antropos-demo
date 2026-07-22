@@ -29,11 +29,14 @@ export type WorkerDetectMessage = {
 export type WorkerRequest = WorkerInitMessage | WorkerDetectMessage;
 
 export type WorkerResponse =
+	| { type: "progress"; percent: number }
 	| { type: "ready"; backend: "webgpu" | "wasm" }
 	| { type: "result"; id: number; detections: CocoModelDetection[] }
 	| { type: "error"; id?: number; message: string };
 
 const PAD_VALUE = 114;
+/** Corte si la descarga deja de avanzar (no si simplemente va lenta). */
+const WEIGHTS_STALL_TIMEOUT_MS = 20_000;
 const BACKEND_INIT_TIMEOUT_MS: Record<"webgpu" | "wasm", number> = {
 	webgpu: 12_000,
 	wasm: 60_000,
@@ -73,14 +76,15 @@ async function initialise(config: WorkerInitMessage) {
 			? ["webgpu", "wasm"]
 			: ["wasm"];
 
+		// Descargamos los pesos aparte para poder reportar avance real: antes la
+		// barra se quedaba clavada en un porcentaje fijo mientras bajaban ~13 MB
+		// y parecia colgada.
+		const weights = await fetchWeights(config.modelUrl);
+
 		const errors: string[] = [];
 		for (const backend of backends) {
 			try {
-				const session = await createSessionWithTimeout(
-					ort,
-					config.modelUrl,
-					backend,
-				);
+				const session = await createSessionWithTimeout(ort, weights, backend);
 				const inputName = session.inputNames[0];
 				const outputName = session.outputNames[0];
 				if (!inputName || !outputName) {
@@ -177,13 +181,83 @@ async function detect({ id, bitmap, frame }: WorkerDetectMessage) {
 	}
 }
 
+/**
+ * Baja los pesos informando avance. Si el servidor no manda `Content-Length`
+ * caemos a una lectura simple: sin total no hay porcentaje que reportar.
+ */
+async function fetchWeights(modelUrl: string): Promise<Uint8Array> {
+	// Sin corte, una red que se traba a mitad de la descarga deja el detector
+	// "preparando" para siempre. El reloj se reinicia con cada trozo recibido,
+	// asi que una conexion lenta pero viva no se cancela.
+	const controller = new AbortController();
+	let stallTimer = setTimeout(
+		() => controller.abort(),
+		WEIGHTS_STALL_TIMEOUT_MS,
+	);
+	const keepAlive = () => {
+		clearTimeout(stallTimer);
+		stallTimer = setTimeout(() => controller.abort(), WEIGHTS_STALL_TIMEOUT_MS);
+	};
+
+	let response: Response;
+	try {
+		response = await fetch(modelUrl, { signal: controller.signal });
+	} catch (error) {
+		clearTimeout(stallTimer);
+		throw controller.signal.aborted
+			? new Error("La descarga del modelo se quedo sin respuesta.")
+			: error;
+	}
+	if (!response.ok) {
+		clearTimeout(stallTimer);
+		throw new Error(`No se pudo descargar el modelo (HTTP ${response.status})`);
+	}
+	const total = Number(response.headers.get("content-length") ?? 0);
+	if (!response.body || !Number.isFinite(total) || total <= 0) {
+		try {
+			return new Uint8Array(await response.arrayBuffer());
+		} finally {
+			clearTimeout(stallTimer);
+		}
+	}
+
+	const reader = response.body.getReader();
+	const chunks: Uint8Array[] = [];
+	let received = 0;
+	let lastReported = 0;
+	while (true) {
+		const { done, value } = await reader.read();
+		if (done) break;
+		if (!value) continue;
+		keepAlive();
+		chunks.push(value);
+		received += value.length;
+		// 40..85 %: el tramo que la UI reserva para la descarga.
+		const percent = 40 + Math.round((received / total) * 45);
+		if (percent - lastReported >= 2) {
+			lastReported = percent;
+			post({ type: "progress", percent });
+		}
+	}
+
+	clearTimeout(stallTimer);
+	const weights = new Uint8Array(received);
+	let offset = 0;
+	for (const chunk of chunks) {
+		weights.set(chunk, offset);
+		offset += chunk.length;
+	}
+	post({ type: "progress", percent: 88 });
+	return weights;
+}
+
 async function createSessionWithTimeout(
 	ort: typeof import("onnxruntime-web"),
-	modelUrl: string,
+	weights: Uint8Array,
 	backend: "webgpu" | "wasm",
 ) {
 	return await Promise.race([
-		ort.InferenceSession.create(modelUrl, {
+		ort.InferenceSession.create(weights, {
 			executionProviders: [backend],
 			graphOptimizationLevel: "all",
 		}),

@@ -37,10 +37,11 @@ export function supportsWorkerInference() {
 export async function createBarDetector(
 	config: YoloModelConfig,
 	onBackend?: (backend: YoloRuntimeBackend) => void,
+	onProgress?: (percent: number) => void,
 ): Promise<YoloClient> {
 	if (supportsWorkerInference()) {
 		try {
-			const client = await createYoloWorkerClient(config);
+			const client = await createYoloWorkerClient(config, onProgress);
 			onBackend?.(client.backend);
 			return client;
 		} catch {
@@ -63,6 +64,7 @@ export async function createBarDetector(
 
 export async function createYoloWorkerClient(
 	config: YoloModelConfig,
+	onProgress?: (percent: number) => void,
 ): Promise<YoloClient> {
 	const worker = new Worker(new URL("./yolo-worker.ts", import.meta.url), {
 		type: "module",
@@ -86,6 +88,10 @@ export async function createYoloWorkerClient(
 
 		const onInit = (event: MessageEvent<WorkerResponse>) => {
 			const message = event.data;
+			if (message.type === "progress") {
+				onProgress?.(message.percent);
+				return;
+			}
 			if (message.type === "ready") {
 				clearTimeout(timer);
 				worker.removeEventListener("message", onInit);

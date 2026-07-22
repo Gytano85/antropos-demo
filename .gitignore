@@ -77,6 +77,12 @@ apps/docs/.source/
 # Manual fiscal test scripts (contain sensitive data)
 packages/fiscal/src/manual-*.ts
 
-# Binarios del detector de camara (regenerables con: bun run cameras:setup)
+# Runtime ONNX: se regenera en cada build desde node_modules.
 apps/web/public/ort/
-apps/web/public/models/
+
+# Modelos del detector: el base se descarga en el build, pero el de 416 px se
+# genera con Python/ultralytics y no puede producirse en el CI, asi que ese si
+# viaja en el repo. Sin el, produccion caia al de 640 px (9.1 s de carga contra
+# 1.1 s) y el detector se quedaba "preparando" hasta agotar el timeout.
+apps/web/public/models/*
+!apps/web/public/models/yolov8n-416.onnx

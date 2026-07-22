@@ -360,10 +360,16 @@ export default function CamerasPage() {
 			barYoloSessionPromiseRef.current = (async () => {
 				const definition = await resolveAvailableBarModel();
 				setBarModelProgress(35);
-				const session = await createBarDetector(definition, (backend) => {
-					barModelRuntimeRef.current = backend;
-					setBarModelRuntime(backend);
-				});
+				const session = await createBarDetector(
+					definition,
+					(backend) => {
+						barModelRuntimeRef.current = backend;
+						setBarModelRuntime(backend);
+					},
+					// Avance real de la descarga: la barra se quedaba fija en 35 %
+					// mientras bajaban los pesos y parecia congelada.
+					(percent) => setBarModelProgress(percent),
+				);
 				barYoloSessionRef.current = session;
 				barModelDefinitionRef.current = definition;
 				setBarModelProgress(100);
