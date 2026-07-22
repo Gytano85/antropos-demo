@@ -30,6 +30,86 @@ const bytea = customType<{ data: Buffer; driverData: Buffer }>({
 	},
 });
 
+// ── Multi-branch tenancy ────────────────────────────────────────────────────
+// Every branch receives a stable data_scope_uid. Existing operational tables
+// continue using user_uid, but it now points at this scope while the membership
+// tables keep the real authenticated user. This isolates every existing module
+// without duplicating its business logic.
+export const organizations = pgTable("organizations", {
+	id: serial("id").primaryKey(),
+	name: varchar("name", { length: 160 }).notNull(),
+	owner_user_uid: varchar("owner_user_uid", { length: 255 }).notNull(),
+	created_at: timestamp("created_at").defaultNow(),
+	updated_at: timestamp("updated_at").defaultNow(),
+});
+
+export const branches = pgTable(
+	"branches",
+	{
+		id: serial("id").primaryKey(),
+		organization_id: integer("organization_id")
+			.references(() => organizations.id, { onDelete: "cascade" })
+			.notNull(),
+		name: varchar("name", { length: 160 }).notNull(),
+		code: varchar("code", { length: 30 }).notNull(),
+		address: text("address"),
+		phone: varchar("phone", { length: 30 }),
+		timezone: varchar("timezone", { length: 80 })
+			.notNull()
+			.default("America/Mexico_City"),
+		status: varchar("status", { length: 20 }).notNull().default("active"),
+		data_scope_uid: varchar("data_scope_uid", { length: 255 }).notNull().unique(),
+		created_at: timestamp("created_at").defaultNow(),
+		updated_at: timestamp("updated_at").defaultNow(),
+	},
+	(table) => [
+		uniqueIndex("branches_organization_code_idx").on(
+			table.organization_id,
+			table.code,
+		),
+	],
+);
+
+export const branchMemberships = pgTable(
+	"branch_memberships",
+	{
+		id: serial("id").primaryKey(),
+		branch_id: integer("branch_id")
+			.references(() => branches.id, { onDelete: "cascade" })
+			.notNull(),
+		user_uid: varchar("user_uid", { length: 255 }).notNull(),
+		role: varchar("role", { length: 30 }).notNull().default("viewer"),
+		status: varchar("status", { length: 20 }).notNull().default("active"),
+		created_at: timestamp("created_at").defaultNow(),
+		updated_at: timestamp("updated_at").defaultNow(),
+	},
+	(table) => [
+		uniqueIndex("branch_memberships_branch_user_idx").on(
+			table.branch_id,
+			table.user_uid,
+		),
+	],
+);
+
+export const branchRolePermissions = pgTable(
+	"branch_role_permissions",
+	{
+		id: serial("id").primaryKey(),
+		branch_id: integer("branch_id")
+			.references(() => branches.id, { onDelete: "cascade" })
+			.notNull(),
+		role: varchar("role", { length: 30 }).notNull(),
+		permissions: text("permissions").notNull(),
+		updated_at: timestamp("updated_at").defaultNow(),
+	},
+	(table) => [
+		uniqueIndex("branch_role_permissions_branch_role_idx").on(
+			table.branch_id,
+			table.role,
+		),
+	],
+);
+
 // ── Products ────────────────────────────────────────────────────────────────
 export const products = pgTable("products", {
 	id: serial("id").primaryKey(),
@@ -682,3 +762,36 @@ export const invoiceEventsRelations = relations(invoiceEvents, ({ one }) => ({
 		references: [invoices.id],
 	}),
 }));
+
+export const organizationsRelations = relations(organizations, ({ many }) => ({
+	branches: many(branches),
+}));
+
+export const branchesRelations = relations(branches, ({ one, many }) => ({
+	organization: one(organizations, {
+		fields: [branches.organization_id],
+		references: [organizations.id],
+	}),
+	memberships: many(branchMemberships),
+	rolePermissions: many(branchRolePermissions),
+}));
+
+export const branchMembershipsRelations = relations(
+	branchMemberships,
+	({ one }) => ({
+		branch: one(branches, {
+			fields: [branchMemberships.branch_id],
+			references: [branches.id],
+		}),
+	}),
+);
+
+export const branchRolePermissionsRelations = relations(
+	branchRolePermissions,
+	({ one }) => ({
+		branch: one(branches, {
+			fields: [branchRolePermissions.branch_id],
+			references: [branches.id],
+		}),
+	}),
+);

@@ -6,6 +6,12 @@ export interface BaseUser {
   id: string;
   name: string;
   email: string;
+  accountUserId?: string;
+  branchId?: number | null;
+  branchName?: string | null;
+  organizationId?: number | null;
+  role?: string | null;
+  permissions?: string[];
 }
 
 export interface TRPCContext {

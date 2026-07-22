@@ -66,6 +66,7 @@ const messages = {
 		closeMenu: "Close menu",
 		myAccount: "My Account",
 		settings: "Settings",
+		branches: "Branches & access",
 		support: "Support",
 		logout: "Logout",
 	},

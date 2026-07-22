@@ -3,6 +3,7 @@ import { router } from "./init";
 import { alcoholControlRouter } from "./routers/alcohol-control";
 import { appSettingsRouter } from "./routers/app-settings";
 import { attendanceRouter } from "./routers/attendance";
+import { branchesRouter } from "./routers/branches";
 import { camerasRouter } from "./routers/cameras";
 import { citiesRouter } from "./routers/cities";
 import { customersRouter } from "./routers/customers";
@@ -25,6 +26,7 @@ export const appRouter = router({
 	alcoholControl: alcoholControlRouter,
 	appSettings: appSettingsRouter,
 	attendance: attendanceRouter,
+	branches: branchesRouter,
 	cameras: camerasRouter,
 	customers: customersRouter,
 	orders: ordersRouter,

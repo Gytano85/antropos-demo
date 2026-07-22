@@ -8,6 +8,7 @@ import { auth } from "@/lib/auth";
 const DEMO_EMAIL = "test@example.com";
 const DEMO_PASSWORD = "test1234";
 const DEMO_COOKIE = "antropos_demo_session";
+const BRANCH_COOKIE = "antropos_active_branch";
 
 export async function login(formData: FormData) {
   const email = formData.get("email") as string;
@@ -24,6 +25,7 @@ export async function login(formData: FormData) {
     });
 
     const cookieStore = await cookies();
+    cookieStore.delete(BRANCH_COOKIE);
     cookieStore.set(DEMO_COOKIE, "1", {
       httpOnly: true,
       sameSite: "lax",
@@ -32,7 +34,7 @@ export async function login(formData: FormData) {
       maxAge: 60 * 60 * 24 * 7,
     });
     revalidatePath("/admin", "layout");
-    redirect("/admin");
+    redirect("/branches");
   }
 
   try {
@@ -45,12 +47,14 @@ export async function login(formData: FormData) {
   }
 
   revalidatePath("/admin", "layout");
-  redirect("/admin");
+  (await cookies()).delete(BRANCH_COOKIE);
+  redirect("/branches");
 }
 
 export async function logout() {
   const cookieStore = await cookies();
   cookieStore.delete(DEMO_COOKIE);
+  cookieStore.delete(BRANCH_COOKIE);
 
   await auth.api.signOut({
     headers: await headers(),

@@ -11,6 +11,7 @@ import { useQuery } from "@tanstack/react-query";
 import {
 	BookOpenIcon,
 	BrainCircuitIcon,
+	Building2Icon,
 	CalendarCheckIcon,
 	CameraIcon,
 	CreditCardIcon,
@@ -29,9 +30,9 @@ import {
 	XIcon,
 } from "lucide-react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { LocaleSwitcher } from "@/components/locale-switcher";
 import { useTRPC } from "@/lib/trpc/client";
 
@@ -53,50 +54,72 @@ interface NavItem {
 		| "attendance"
 		| "alcoholControl"
 		| "visionOps"
-		| "cameras";
+		| "cameras"
+		| "branches";
 	icon: LucideIcon;
+	permission?: string;
 }
 
 const navItems: NavItem[] = [
-	{ href: "/admin", labelKey: "dashboard", icon: LayoutDashboardIcon },
-	{ href: "/admin/tables", labelKey: "tables", icon: UtensilsIcon },
+	{ href: "/admin", labelKey: "dashboard", icon: LayoutDashboardIcon, permission: "dashboard.view" },
+	{ href: "/admin/tables", labelKey: "tables", icon: UtensilsIcon, permission: "sales.view" },
 	{
 		href: "/admin/attendance",
 		labelKey: "attendance",
 		icon: CalendarCheckIcon,
+		permission: "attendance.view",
 	},
 	{
 		href: "/admin/alcohol-control",
 		labelKey: "alcoholControl",
 		icon: ScaleIcon,
+		permission: "cameras.view",
 	},
-	{ href: "/admin/cameras", labelKey: "cameras", icon: CameraIcon },
-	{ href: "/menu", labelKey: "digitalMenu", icon: BookOpenIcon },
+	{ href: "/admin/cameras", labelKey: "cameras", icon: CameraIcon, permission: "cameras.view" },
+	{ href: "/menu", labelKey: "digitalMenu", icon: BookOpenIcon, permission: "menu.view" },
 	{
 		href: "/admin/menu-engine",
 		labelKey: "menuEngine",
 		icon: BrainCircuitIcon,
+		permission: "menu.view",
 	},
-	{ href: "/admin/cashier", labelKey: "cashier", icon: DollarSignIcon },
-	{ href: "/admin/inventory", labelKey: "inventory", icon: PackageIcon },
-	{ href: "/admin/customers", labelKey: "customers", icon: UsersIcon },
-	{ href: "/admin/orders", labelKey: "orders", icon: ShoppingBagIcon },
+	{ href: "/admin/cashier", labelKey: "cashier", icon: DollarSignIcon, permission: "sales.view" },
+	{ href: "/admin/inventory", labelKey: "inventory", icon: PackageIcon, permission: "inventory.view" },
+	{ href: "/admin/customers", labelKey: "customers", icon: UsersIcon, permission: "customers.manage" },
+	{ href: "/admin/orders", labelKey: "orders", icon: ShoppingBagIcon, permission: "sales.view" },
 	{
 		href: "/admin/payment-methods",
 		labelKey: "paymentMethods",
 		icon: CreditCardIcon,
+		permission: "settings.manage",
 	},
-	{ href: "/admin/fiscal", labelKey: "invoices", icon: ReceiptTextIcon },
-	{ href: "/admin/settings", labelKey: "settings", icon: SettingsIcon },
+	{ href: "/admin/fiscal", labelKey: "invoices", icon: ReceiptTextIcon, permission: "fiscal.manage" },
+	{ href: "/admin/settings", labelKey: "settings", icon: SettingsIcon, permission: "settings.manage" },
+	{ href: "/admin/branches", labelKey: "branches", icon: Building2Icon, permission: "branches.manage" },
 ];
 
 export function AdminLayout({ children }: { children: React.ReactNode }) {
 	const trpc = useTRPC();
 	const pathname = usePathname();
+	const router = useRouter();
 	const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 	const [sidebarExpanded, setSidebarExpanded] = useState(false);
 	const t = useTranslations("nav");
 	const { data: appSettings } = useQuery(trpc.appSettings.get.queryOptions());
+	const { data: activeBranch } = useQuery(trpc.branches.active.queryOptions());
+	const visibleNavItems = navItems.filter(
+		(item) => !item.permission || activeBranch?.permissions.includes(item.permission),
+	);
+
+	useEffect(() => {
+		if (!activeBranch) return;
+		const route = navItems
+			.filter((item) => item.href !== "/admin" && (pathname === item.href || pathname.startsWith(`${item.href}/`)))
+			.sort((a, b) => b.href.length - a.href.length)[0];
+		if (route?.permission && !activeBranch.permissions.includes(route.permission)) {
+			router.replace(visibleNavItems[0]?.href ?? "/branches");
+		}
+	}, [activeBranch, pathname, router, visibleNavItems]);
 
 	return (
 		<div className="flex min-h-screen w-full flex-col bg-muted/40">
@@ -131,6 +154,9 @@ export function AdminLayout({ children }: { children: React.ReactNode }) {
 					<span>{appSettings?.company_title ?? "Antro POS"}</span>
 				</Link>
 				<div className="ml-auto flex items-center gap-2">
+					<Button variant="outline" size="sm" asChild className="max-w-52 gap-2">
+						<Link href="/branches"><Building2Icon className="h-4 w-4 shrink-0" /><span className="truncate">{activeBranch?.name ?? "Cambiar sucursal"}</span></Link>
+					</Button>
 					<LocaleSwitcher />
 				</div>
 			</header>
@@ -162,7 +188,7 @@ export function AdminLayout({ children }: { children: React.ReactNode }) {
 								<XIcon className="h-5 w-5" />
 							</Button>
 						</div>
-						{navItems.map(({ href, labelKey, icon: Icon }) => (
+						{visibleNavItems.map(({ href, labelKey, icon: Icon }) => (
 							<Link
 								key={href}
 								href={href}
@@ -198,7 +224,7 @@ export function AdminLayout({ children }: { children: React.ReactNode }) {
 						}`}
 					>
 						<TooltipProvider>
-							{navItems.map(({ href, labelKey, icon: Icon }) => (
+							{visibleNavItems.map(({ href, labelKey, icon: Icon }) => (
 								<Tooltip key={href}>
 									<TooltipTrigger asChild>
 										<Link

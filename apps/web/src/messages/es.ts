@@ -68,6 +68,7 @@ const messages: Messages = {
 		closeMenu: "Cerrar menú",
 		myAccount: "Mi Cuenta",
 		settings: "Configuración",
+		branches: "Sucursales y accesos",
 		support: "Soporte",
 		logout: "Cerrar sesión",
 	},
