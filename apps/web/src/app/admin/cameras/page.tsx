@@ -53,7 +53,6 @@ import {
 	type BoundingBox,
 	type CountingDirection,
 	type CountingLine,
-	dampVisualVelocity,
 	defaultCountingLine,
 	itemLabel,
 	normalizeLine,
@@ -90,27 +89,8 @@ type DetectionResult = {
 
 type CameraMode = "presence" | "bar_exit";
 
-/** Cadencia del emparejamiento visual, independiente del dibujo. */
-const VISUAL_TRACKING_INTERVAL_MS = 90;
-
-/**
- * Cuanta velocidad conserva un track que solo se sigue visualmente. Al ser
- * menor que 1 la extrapolacion se apaga sola si el modelo deja de confirmarlo.
- */
-const VISUAL_VELOCITY_DAMPING = 0.72;
-
-/** Tope de extrapolacion por velocidad al centrar la busqueda de plantilla. */
-const VISUAL_PREDICTION_CAP_MS = 140;
 type BarModelStatus = "idle" | "loading" | "ready" | "unsupported" | "error";
 type BarModelRuntime = "webgpu" | "wasm";
-type VisualTrackTemplate = {
-	columns: number;
-	rows: number;
-	values: Uint8Array;
-	bbox: BoundingBox;
-	updatedAt: number;
-};
-
 export default function CamerasPage() {
 	const trpc = useTRPC();
 	const queryClient = useQueryClient();
@@ -160,7 +140,6 @@ export default function CamerasPage() {
 	const [barDebugVisible, setBarDebugVisible] = useState(false);
 	const [barTracks, setBarTracks] = useState<BarTrack[]>([]);
 	const barTracksRef = useRef<BarTrack[]>([]);
-	const barVisualTemplatesRef = useRef(new Map<string, VisualTrackTemplate>());
 	const [barCandidates, setBarCandidates] = useState<
 		Array<{
 			type: BarItemType;
@@ -180,7 +159,6 @@ export default function CamerasPage() {
 	const [barModelRuntime, setBarModelRuntime] =
 		useState<BarModelRuntime | null>(null);
 	const lastBarModelAtRef = useRef(0);
-	const lastVisualAtRef = useRef(0);
 	const barSessionIdRef = useRef(createVisionSessionId());
 	const loadedBarConfigForRef = useRef<number | null>(null);
 	const [enabledBarItems, setEnabledBarItems] = useState<
@@ -407,7 +385,6 @@ export default function CamerasPage() {
 	const resetBarTracking = useCallback(() => {
 		barTracksRef.current = [];
 		barCandidatesRef.current = [];
-		barVisualTemplatesRef.current.clear();
 		lastBarModelAtRef.current = 0;
 		barSessionIdRef.current = createVisionSessionId();
 		setBarTracks([]);
@@ -517,6 +494,7 @@ export default function CamerasPage() {
 				bbox: BoundingBox;
 				label: string;
 			}> = [],
+			renderedAt = Date.now(),
 		) => {
 			const overlay = overlayCanvasRef.current;
 			if (!overlay) return;
@@ -572,7 +550,9 @@ export default function CamerasPage() {
 				context.lineWidth = Math.max(3, Math.round(canvas.width / 320));
 
 				for (const track of mergeVisibleDrinkTracks(
-					tracks.filter(isDrawableBarTrack).map(projectTrackForDisplay),
+					tracks
+						.filter(isDrawableBarTrack)
+						.map((track) => projectTrackForDisplay(track, renderedAt)),
 				)) {
 					const [x, y, width, height] = track.bbox;
 					const state = visualTrackState(track);
@@ -602,7 +582,7 @@ export default function CamerasPage() {
 						context.beginPath();
 						context.arc(track.center.x, track.center.y, 4, 0, Math.PI * 2);
 						context.fill();
-						const reason = trackDebugReason(track, line);
+						const reason = trackDebugReason(track);
 						const reasonWidth = context.measureText(reason).width + 12;
 						context.fillStyle = "rgba(0,0,0,0.68)";
 						context.fillRect(x, y + height + 4, reasonWidth, 22);
@@ -632,55 +612,16 @@ export default function CamerasPage() {
 		async (canvas: HTMLCanvasElement) => {
 			if (!selected) return;
 			const now = Date.now();
-			// El emparejamiento visual compara plantillas de pixeles y es caro:
-			// conserva su propia cadencia mientras el dibujo corre en cada frame,
-			// que es lo que hace que se vea fluido.
-			let visuallyTracked = barTracksRef.current;
-			if (now - lastVisualAtRef.current >= VISUAL_TRACKING_INTERVAL_MS) {
-				lastVisualAtRef.current = now;
-				visuallyTracked = refineTracksWithVisualTemplates(
-					canvas,
-					barTracksRef.current,
-					barVisualTemplatesRef.current,
-					now,
-				);
-				const visualCrossing = markVisualCrossings(
-					visuallyTracked,
-					lineToCanvas(countingLine, canvas),
-					countingDirection,
-					Math.max(14, countingBandPx * 0.46),
-					Math.max(12, countingBandPx * 0.75),
-					now,
-				);
-				visuallyTracked = visualCrossing.tracks;
-				if (
-					visuallyTracked !== barTracksRef.current ||
-					visualCrossing.events.length > 0
-				) {
-					barTracksRef.current = visuallyTracked;
-					setBarTracks(visuallyTracked);
-					setBarDetectionCount(
-						mergeVisibleDrinkTracks(visuallyTracked.filter(isVisibleBarTrack))
-							.length,
-					);
-					if (visualCrossing.events.length > 0) {
-						setBarEvents((current) =>
-							[...visualCrossing.events, ...current].slice(0, 20),
-						);
-						for (const event of visualCrossing.events) {
-							mutateBarExit({
-								cameraId: selected.id,
-								trackId: event.trackId,
-								itemType: event.type,
-								confidenceAvg: event.confidence,
-								direction: event.direction,
-								zone: draft.location || "Barra",
-							});
-						}
-					}
-				}
-			}
-			drawDetections(canvas, [], visuallyTracked, barCandidatesRef.current);
+			// El estado de los tracks solo cambia con detecciones reales del
+			// modelo. Aqui unicamente se dibuja, extrapolando la posicion para que
+			// se vea fluido entre inferencias; esa extrapolacion no se guarda.
+			drawDetections(
+				canvas,
+				[],
+				barTracksRef.current,
+				barCandidatesRef.current,
+				now,
+			);
 			if (barModelStatus === "idle") {
 				void getBarModelDetector().catch(() => undefined);
 				return;
@@ -768,12 +709,6 @@ export default function CamerasPage() {
 						idPrefix: barSessionIdRef.current,
 					});
 					barTracksRef.current = tracked.tracks;
-					refreshVisualTemplates(
-						canvas,
-						tracked.tracks,
-						barVisualTemplatesRef.current,
-						Date.now(),
-					);
 					setBarTracks(tracked.tracks);
 					setBarDetectionCount(
 						mergeVisibleDrinkTracks(tracked.tracks.filter(isVisibleBarTrack))
@@ -2268,8 +2203,13 @@ function isDrawableBarTrack(track: BarTrack) {
 	);
 }
 
-function projectTrackForDisplay(track: BarTrack): BarTrack {
-	const elapsed = Math.min(260, Math.max(0, Date.now() - track.lastSeenAt));
+/**
+ * Extrapola la caja SOLO para dibujarla. Devuelve una copia: el resultado nunca
+ * vuelve al estado del track. Esa separacion es lo que impide que el suavizado
+ * visual se realimente y termine despegando la caja del objeto.
+ */
+function projectTrackForDisplay(track: BarTrack, now: number): BarTrack {
+	const elapsed = Math.min(260, Math.max(0, now - track.lastSeenAt));
 	const dx = track.velocity.x * elapsed;
 	const dy = track.velocity.y * elapsed;
 	if (Math.abs(dx) + Math.abs(dy) < 0.5) return track;
@@ -2286,95 +2226,6 @@ function projectTrackForDisplay(track: BarTrack): BarTrack {
 			y: track.center.y + dy,
 		},
 	};
-}
-
-function markVisualCrossings(
-	tracks: BarTrack[],
-	line: CountingLine,
-	direction: CountingDirection,
-	minTravelDistance: number,
-	gatePadding: number,
-	now: number,
-) {
-	let changed = false;
-	const events: BarExitEvent[] = [];
-	const nextTracks = tracks.map((track) => {
-		if (
-			track.counted ||
-			!isDrinkItem(track.type) ||
-			!canVisualCountTrack(track) ||
-			!track.previousCenter
-		) {
-			return track;
-		}
-		const previous = track.previousCenter;
-		const current = track.center;
-		const previousSide =
-			track.lastSide !== 0
-				? track.lastSide
-				: visualStableSide(previous, line, 6);
-		const currentSide = visualStableSide(current, line, 6);
-		if (
-			previousSide === 0 ||
-			currentSide === 0 ||
-			previousSide === currentSide
-		) {
-			return {
-				...track,
-				lastSide: currentSide === 0 ? track.lastSide : currentSide,
-				lastStableCenter: currentSide === 0 ? track.lastStableCenter : current,
-			};
-		}
-		const directionalTravel = visualMovementInDirection(
-			track.firstCenter,
-			current,
-			direction,
-		);
-		const stepTravel = visualMovementInDirection(previous, current, direction);
-		const crossed =
-			directionalTravel >= minTravelDistance &&
-			stepTravel > 0 &&
-			visualCrossesFiniteLine(previous, current, line, gatePadding);
-		if (!crossed) {
-			// currentSide ya no puede ser 0: el early return de arriba lo descarta.
-			if (
-				track.lastSide !== currentSide ||
-				track.lastStableCenter?.x !== current.x ||
-				track.lastStableCenter?.y !== current.y
-			) {
-				changed = true;
-				return {
-					...track,
-					lastSide: currentSide,
-					lastStableCenter: current,
-				};
-			}
-			return track;
-		}
-		changed = true;
-		const countedTrack = {
-			...track,
-			counted: true,
-			lastSide: currentSide,
-			lastStableCenter: current,
-		};
-		events.push({
-			trackId: track.id,
-			type: track.type,
-			confidence: track.confidence,
-			direction,
-			time: now,
-			crossingPoint: visualLineIntersection(previous, current, line),
-		});
-		return countedTrack;
-	});
-	return { tracks: changed ? nextTracks : tracks, events };
-}
-
-function canVisualCountTrack(track: BarTrack) {
-	return (
-		track.state === "confirmed" || (track.hits >= 1 && track.confidence >= 0.2)
-	);
 }
 
 type VisualTrackState =
@@ -2405,282 +2256,13 @@ function shortTrackId(id: string) {
 	return id.split("-").slice(-2).join("-");
 }
 
-function trackDebugReason(track: BarTrack, line: CountingLine) {
+function trackDebugReason(track: BarTrack) {
 	if (track.counted) return "contada";
 	if (track.misses > 0) return `perdida ${track.misses}`;
 	if (track.state !== "confirmed") return `nueva h${track.hits}`;
 	if (!track.previousCenter) return "sin trayectoria";
-	const side = visualStableSide(track.center, line, 6);
-	if (side === 0) return "dentro de banda";
-	if (track.lastSide === side) return "mismo lado";
+	if (track.lastSide === 0) return "dentro de banda";
 	return "lista para cruce";
-}
-
-function refineTracksWithVisualTemplates(
-	canvas: HTMLCanvasElement,
-	tracks: BarTrack[],
-	templates: Map<string, VisualTrackTemplate>,
-	now: number,
-) {
-	if (tracks.length === 0 || templates.size === 0) return tracks;
-	const context = canvas.getContext("2d", { willReadFrequently: true });
-	if (!context) return tracks;
-	const frame = context.getImageData(0, 0, canvas.width, canvas.height);
-	let changed = false;
-	const refined = tracks.map((track) => {
-		if (!isDrawableBarTrack(track) || !isDrinkItem(track.type)) return track;
-		const template = templates.get(track.id);
-		if (!template) return track;
-		const match = findVisualTemplateMatch(frame, track, template, now);
-		if (!match || match.score > 38) return track;
-		const previousCenter = track.center;
-		const center = {
-			x: match.bbox[0] + match.bbox[2] / 2,
-			y: match.bbox[1] + match.bbox[3] / 2,
-		};
-		changed = true;
-		return {
-			...track,
-			bbox: match.bbox,
-			previousCenter,
-			center,
-			// La velocidad NO se recalcula aqui a proposito. La busqueda se centra
-			// en la posicion extrapolada con esta misma velocidad, asi que medirla
-			// desde el resultado la realimentaba: el track se aceleraba solo en la
-			// direccion del movimiento hasta escaparse del encuadre. La velocidad
-			// solo se mide contra detecciones reales del modelo; entre una y otra
-			// se amortigua para que un track sin deteccion frene en vez de volar.
-			velocity: dampVisualVelocity(track.velocity, VISUAL_VELOCITY_DAMPING),
-			lastSeenAt: now,
-			misses: Math.max(0, track.misses - 1),
-		};
-	});
-	return changed ? refined : tracks;
-}
-
-function refreshVisualTemplates(
-	canvas: HTMLCanvasElement,
-	tracks: BarTrack[],
-	templates: Map<string, VisualTrackTemplate>,
-	now: number,
-) {
-	const liveIds = new Set(tracks.map((track) => track.id));
-	for (const id of templates.keys()) {
-		if (!liveIds.has(id)) templates.delete(id);
-	}
-	const context = canvas.getContext("2d", { willReadFrequently: true });
-	if (!context) return;
-	const frame = context.getImageData(0, 0, canvas.width, canvas.height);
-	for (const track of tracks) {
-		if (!isDrawableBarTrack(track) || !isDrinkItem(track.type)) continue;
-		const template = captureVisualTemplate(frame, track.bbox, now);
-		if (template) templates.set(track.id, template);
-	}
-}
-
-function captureVisualTemplate(
-	frame: ImageData,
-	bbox: BoundingBox,
-	now: number,
-): VisualTrackTemplate | null {
-	const safe = clampBox(bbox, frame.width, frame.height);
-	if (!safe || safe[2] < 8 || safe[3] < 8) return null;
-	const columns = 12;
-	const rows = 12;
-	const values = new Uint8Array(columns * rows);
-	let sum = 0;
-	for (let row = 0; row < rows; row += 1) {
-		for (let column = 0; column < columns; column += 1) {
-			const x = Math.round(safe[0] + ((column + 0.5) / columns) * safe[2]);
-			const y = Math.round(safe[1] + ((row + 0.5) / rows) * safe[3]);
-			const value = frameGrayAt(frame, x, y);
-			values[row * columns + column] = value;
-			sum += value;
-		}
-	}
-	const mean = sum / values.length;
-	const variance =
-		values.reduce((total, value) => total + (value - mean) ** 2, 0) /
-		values.length;
-	if (Math.sqrt(variance) < 5) return null;
-	return { columns, rows, values, bbox: safe, updatedAt: now };
-}
-
-function findVisualTemplateMatch(
-	frame: ImageData,
-	track: BarTrack,
-	template: VisualTrackTemplate,
-	now: number,
-) {
-	// El tope evita que un track sin detecciones recientes proyecte la busqueda
-	// tan lejos que enganche con el fondo en vez de con el objeto.
-	const elapsed = Math.min(
-		VISUAL_PREDICTION_CAP_MS,
-		Math.max(0, now - track.lastSeenAt),
-	);
-	const predicted: BoundingBox = [
-		track.bbox[0] + track.velocity.x * elapsed,
-		track.bbox[1] + track.velocity.y * elapsed,
-		track.bbox[2],
-		track.bbox[3],
-	];
-	const searchRadius = Math.max(
-		18,
-		Math.min(64, Math.max(track.bbox[2], track.bbox[3]) * 0.55),
-	);
-	const step = Math.max(
-		4,
-		Math.round(Math.max(track.bbox[2], track.bbox[3]) / 12),
-	);
-	let best: { bbox: BoundingBox; score: number } | null = null;
-	for (let dy = -searchRadius; dy <= searchRadius; dy += step) {
-		for (let dx = -searchRadius; dx <= searchRadius; dx += step) {
-			const candidate = clampBox(
-				[predicted[0] + dx, predicted[1] + dy, predicted[2], predicted[3]],
-				frame.width,
-				frame.height,
-			);
-			if (!candidate) continue;
-			const score = visualTemplateScore(frame, candidate, template);
-			const centerPenalty =
-				(Math.hypot(dx, dy) / Math.max(1, searchRadius)) * 2.5;
-			const finalScore = score + centerPenalty;
-			if (!best || finalScore < best.score) {
-				best = { bbox: candidate, score: finalScore };
-			}
-		}
-	}
-	return best;
-}
-
-function visualTemplateScore(
-	frame: ImageData,
-	bbox: BoundingBox,
-	template: VisualTrackTemplate,
-) {
-	let total = 0;
-	for (let row = 0; row < template.rows; row += 1) {
-		for (let column = 0; column < template.columns; column += 1) {
-			const x = Math.round(
-				bbox[0] + ((column + 0.5) / template.columns) * bbox[2],
-			);
-			const y = Math.round(bbox[1] + ((row + 0.5) / template.rows) * bbox[3]);
-			const expected = template.values[row * template.columns + column] ?? 0;
-			total += Math.abs(frameGrayAt(frame, x, y) - expected);
-		}
-	}
-	return total / template.values.length;
-}
-
-function frameGrayAt(frame: ImageData, x: number, y: number) {
-	const safeX = Math.max(0, Math.min(frame.width - 1, x));
-	const safeY = Math.max(0, Math.min(frame.height - 1, y));
-	const index = (safeY * frame.width + safeX) * 4;
-	return Math.round(
-		(frame.data[index] ?? 0) * 0.299 +
-			(frame.data[index + 1] ?? 0) * 0.587 +
-			(frame.data[index + 2] ?? 0) * 0.114,
-	);
-}
-
-function clampBox(
-	bbox: BoundingBox,
-	frameWidth: number,
-	frameHeight: number,
-): BoundingBox | null {
-	const width = Math.max(1, Math.min(bbox[2], frameWidth));
-	const height = Math.max(1, Math.min(bbox[3], frameHeight));
-	const x = Math.max(0, Math.min(frameWidth - width, bbox[0]));
-	const y = Math.max(0, Math.min(frameHeight - height, bbox[1]));
-	if (![x, y, width, height].every(Number.isFinite)) return null;
-	return [x, y, width, height];
-}
-
-function visualStableSide(
-	point: { x: number; y: number },
-	line: CountingLine,
-	tolerance: number,
-): -1 | 0 | 1 {
-	const distance = visualSignedDistanceToLine(point, line);
-	if (Math.abs(distance) <= tolerance) return 0;
-	return distance > 0 ? 1 : -1;
-}
-
-function visualSignedDistanceToLine(
-	point: { x: number; y: number },
-	line: CountingLine,
-) {
-	const dx = line.end.x - line.start.x;
-	const dy = line.end.y - line.start.y;
-	const length = Math.hypot(dx, dy);
-	if (length < 1e-6) return 0;
-	return (
-		(dx * (point.y - line.start.y) - dy * (point.x - line.start.x)) / length
-	);
-}
-
-function visualMovementInDirection(
-	start: { x: number; y: number },
-	end: { x: number; y: number },
-	direction: CountingDirection,
-) {
-	if (direction === "left_to_right") return end.x - start.x;
-	if (direction === "right_to_left") return start.x - end.x;
-	if (direction === "top_to_bottom") return end.y - start.y;
-	return start.y - end.y;
-}
-
-function visualCrossesFiniteLine(
-	previous: { x: number; y: number },
-	current: { x: number; y: number },
-	line: CountingLine,
-	padding: number,
-) {
-	const intersection = visualSegmentIntersection(previous, current, line);
-	if (!intersection) return false;
-	const lineLength = Math.hypot(
-		line.end.x - line.start.x,
-		line.end.y - line.start.y,
-	);
-	const normalizedPadding = padding / Math.max(1e-6, lineLength);
-	return (
-		intersection.pathT >= 0 &&
-		intersection.pathT <= 1 &&
-		intersection.lineT >= -normalizedPadding &&
-		intersection.lineT <= 1 + normalizedPadding
-	);
-}
-
-function visualLineIntersection(
-	previous: { x: number; y: number },
-	current: { x: number; y: number },
-	line: CountingLine,
-) {
-	const intersection = visualSegmentIntersection(previous, current, line);
-	const pathT = intersection?.pathT ?? 0.5;
-	return {
-		x: previous.x + (current.x - previous.x) * pathT,
-		y: previous.y + (current.y - previous.y) * pathT,
-	};
-}
-
-function visualSegmentIntersection(
-	pathStart: { x: number; y: number },
-	pathEnd: { x: number; y: number },
-	line: CountingLine,
-) {
-	const rx = pathEnd.x - pathStart.x;
-	const ry = pathEnd.y - pathStart.y;
-	const sx = line.end.x - line.start.x;
-	const sy = line.end.y - line.start.y;
-	const denominator = rx * sy - ry * sx;
-	if (Math.abs(denominator) < 1e-8) return null;
-	const qpx = line.start.x - pathStart.x;
-	const qpy = line.start.y - pathStart.y;
-	return {
-		pathT: (qpx * sy - qpy * sx) / denominator,
-		lineT: (qpx * ry - qpy * rx) / denominator,
-	};
 }
 
 function lineToCanvas(
