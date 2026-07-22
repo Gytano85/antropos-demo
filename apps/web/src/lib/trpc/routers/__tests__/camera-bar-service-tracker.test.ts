@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import {
 	type BarCandidate,
 	type BarTrack,
+	elapsedMatchScale,
 	mergeDuplicateTracks,
 	updateBarTracks,
 } from "../../../cameras/bar-service-tracker";
@@ -291,3 +292,46 @@ function buildTrack(overrides: Partial<BarTrack> & { id: string }): BarTrack {
 		bbox,
 	};
 }
+
+describe("association window vs sampling rate", () => {
+	it("widens the window proportionally to the real gap between samples", () => {
+		expect(elapsedMatchScale(180)).toBeCloseTo(1, 6);
+		expect(elapsedMatchScale(360)).toBeCloseTo(2, 6);
+		// Nunca se encoge por debajo de la referencia ni crece sin limite.
+		expect(elapsedMatchScale(40)).toBe(1);
+		expect(elapsedMatchScale(10_000)).toBe(3);
+		expect(elapsedMatchScale(-5)).toBe(1);
+	});
+
+	it("keeps one track for a fast drink when an inference runs slow", () => {
+		// Ambas muestras quedan del mismo lado de la linea (x=500) para aislar
+		// el gate: si cruzaran, `rescueCrossedTrack` las enlazaria de todos modos
+		// y el test no probaria nada. 540ms y ~400px de avance superan la ventana
+		// sin escalar (~306px para este tamano de objeto).
+		const first = updateBarTracks([], [drinkCandidate(60, 300, "glass")], {
+			...options,
+			now: 0,
+		});
+		const second = updateBarTracks(
+			first.tracks,
+			[drinkCandidate(460, 300, "glass")],
+			{ ...options, now: 540 },
+		);
+
+		// Sin escalar el gate nacia un segundo track sobre el mismo objeto.
+		expect(second.tracks).toHaveLength(1);
+	});
+
+	it("still refuses to link two objects that are genuinely far apart", () => {
+		const first = updateBarTracks([], [drinkCandidate(120, 300, "glass")], {
+			...options,
+			now: 0,
+		});
+		const second = updateBarTracks(
+			first.tracks,
+			[drinkCandidate(900, 620, "glass")],
+			{ ...options, now: 300 },
+		);
+		expect(second.tracks.length).toBeGreaterThan(1);
+	});
+});

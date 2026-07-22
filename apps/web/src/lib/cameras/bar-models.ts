@@ -93,7 +93,7 @@ export const COCO_CLASSES = [
 	"toothbrush",
 ] as const;
 
-export type BarModelId = "beverage" | "coco";
+export type BarModelId = "beverage" | "coco416" | "coco640";
 
 export type BarModelDefinition = YoloModelConfig & {
 	id: BarModelId;
@@ -111,23 +111,43 @@ export const BEVERAGE_MODEL: BarModelDefinition = {
 	scoreThreshold: 0.3,
 };
 
-export const COCO_MODEL: BarModelDefinition = {
-	id: "coco",
-	label: "YOLOv8n COCO",
+/**
+ * COCO re-exportado a 416 px. El coste de una inferencia crece con el cuadrado
+ * de la resolucion: medido en este equipo, 640 px daba 179 ms (5.6/s) y 416 px
+ * da 78 ms (12.8/s). Mas muestras por segundo es justo lo que necesita el
+ * seguimiento para medir el movimiento hacia la linea de conteo.
+ */
+export const COCO_416_MODEL: BarModelDefinition = {
+	id: "coco416",
+	label: "YOLOv8n COCO 416",
 	description:
-		"Modelo general. Detecta botella, copa y vaso, pero no distingue latas.",
+		"Modelo general rapido. Detecta botella, copa y vaso, pero no distingue latas.",
+	modelUrl: "/models/yolov8n-416.onnx",
+	classNames: COCO_CLASSES,
+	inputSize: 416,
+	scoreThreshold: 0.3,
+};
+
+/** Respaldo si aun no se genero el modelo de 416 px. */
+export const COCO_640_MODEL: BarModelDefinition = {
+	id: "coco640",
+	label: "YOLOv8n COCO 640",
+	description:
+		"Modelo general a resolucion completa: mas lento por inferencia.",
 	modelUrl: "/models/yolov8n.onnx",
 	classNames: COCO_CLASSES,
+	inputSize: 640,
 	scoreThreshold: 0.3,
 };
 
 /**
- * Preferimos el modelo especializado y caemos al general si aun no se han
- * copiado sus pesos a /public/models.
+ * Orden de preferencia: el especializado primero, luego el general rapido y por
+ * ultimo el de resolucion completa. Se elige el primero cuyos pesos existan.
  */
 export const BAR_MODEL_PREFERENCE: BarModelDefinition[] = [
 	BEVERAGE_MODEL,
-	COCO_MODEL,
+	COCO_416_MODEL,
+	COCO_640_MODEL,
 ];
 
 export async function resolveAvailableBarModel(
@@ -136,7 +156,7 @@ export async function resolveAvailableBarModel(
 	for (const model of BAR_MODEL_PREFERENCE) {
 		if (await modelExists(model.modelUrl, fetchImpl)) return model;
 	}
-	return COCO_MODEL;
+	return COCO_640_MODEL;
 }
 
 async function modelExists(url: string, fetchImpl: typeof fetch) {

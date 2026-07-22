@@ -11,6 +11,21 @@ export function itemGroup(type: BarItemType): BarItemGroup {
 	return type === "plate" ? "food" : "drink";
 }
 
+/** Intervalo de referencia entre inferencias con el que se calibro el gate. */
+const REFERENCE_SAMPLE_MS = 180;
+
+/**
+ * Cuanto ensanchar la ventana de asociacion segun el tiempo real transcurrido.
+ *
+ * El detector no entrega muestras a intervalos fijos: una inferencia lenta
+ * significa que el objeto recorrio mas distancia, no que sea otro objeto. El
+ * tope evita que una pausa larga permita emparejar cualquier cosa del encuadre.
+ */
+export function elapsedMatchScale(elapsedMs: number): number {
+	const elapsed = Math.max(0, elapsedMs);
+	return Math.min(3, Math.max(1, elapsed / REFERENCE_SAMPLE_MS));
+}
+
 export type CountingDirection =
 	| "left_to_right"
 	| "right_to_left"
@@ -629,13 +644,19 @@ function matchCost(
 		bboxDiagonal(track.bbox),
 		bboxDiagonal(candidate.bbox),
 	);
+	// La ventana de asociacion crece con el tiempo real entre muestras: si una
+	// inferencia tarda el doble, el objeto recorrio el doble de distancia. Sin
+	// esto, un frame lento rompia la asociacion y nacia un track duplicado que
+	// ademas perdia el cruce.
+	const elapsedScale = elapsedMatchScale(elapsed);
 	const maxDistance = Math.min(
 		frameDiagonal * (itemGroup(track.type) === "drink" ? 0.36 : 0.28),
 		Math.max(
 			frameDiagonal * 0.055,
 			objectDiagonal * (itemGroup(track.type) === "drink" ? 2.35 : 1.7),
 		) *
-			(1 + Math.min(track.misses, 4) * 0.28),
+			(1 + Math.min(track.misses, 4) * 0.28) *
+			elapsedScale,
 	);
 	const distance = pointDistance(predicted, candidateCenter);
 	if (distance > maxDistance) return Number.POSITIVE_INFINITY;

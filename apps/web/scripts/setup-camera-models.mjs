@@ -6,7 +6,7 @@
  * salen de node_modules y el modelo base se descarga una sola vez.
  */
 import { createWriteStream } from "node:fs";
-import { copyFile, mkdir, stat } from "node:fs/promises";
+import { copyFile, mkdir, readdir, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -21,12 +21,13 @@ const ortDistCandidates = [
 const ortPublic = join(appRoot, "public", "ort");
 const modelsPublic = join(appRoot, "public", "models");
 
-const ORT_FILES = [
-	"ort-wasm-simd-threaded.wasm",
-	"ort-wasm-simd-threaded.mjs",
-	"ort-wasm-simd-threaded.jsep.wasm",
-	"ort-wasm-simd-threaded.jsep.mjs",
-];
+/**
+ * Todos los binarios `ort-wasm-*`, no solo los que parecen necesarios: ORT
+ * resuelve cual cargar en tiempo de ejecucion y pide `asyncify` aunque se use
+ * el backend simple. Copiar un subconjunto dejaba el backend WASM inservible
+ * con "Failed to fetch dynamically imported module".
+ */
+const ORT_FILE_PATTERN = /^ort-wasm-.*\.(wasm|mjs)$/;
 
 const BASE_MODEL = {
 	file: "yolov8n.onnx",
@@ -50,12 +51,16 @@ async function copyOrtRuntime() {
 		);
 	}
 	await mkdir(ortPublic, { recursive: true });
-	for (const file of ORT_FILES) {
+	const files = (await readdir(ortDist)).filter((file) =>
+		ORT_FILE_PATTERN.test(file),
+	);
+	if (files.length === 0) {
+		throw new Error("No se encontraron binarios ort-wasm-* en node_modules.");
+	}
+	for (const file of files) {
 		await copyFile(join(ortDist, file), join(ortPublic, file));
 	}
-	console.log(
-		`✓ Runtime ONNX copiado a public/ort (${ORT_FILES.length} archivos)`,
-	);
+	console.log(`✓ Runtime ONNX copiado a public/ort (${files.length} archivos)`);
 }
 
 async function firstExistingPath(paths) {

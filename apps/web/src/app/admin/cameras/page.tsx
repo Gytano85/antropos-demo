@@ -89,6 +89,14 @@ type DetectionResult = {
 
 type CameraMode = "presence" | "bar_exit";
 
+/**
+ * Piso entre inferencias. Solo evita encolar trabajo inutil: quien marca el
+ * ritmo real es `barModelBusyRef`, que impide solapar pasadas del modelo.
+ * Cuanto mas seguido muestreamos, mejor se mide el movimiento entre la barra y
+ * la linea de conteo; un tope alto submuestreaba las bebidas rapidas.
+ */
+const MIN_INFERENCE_GAP_MS = 30;
+
 type BarModelStatus = "idle" | "loading" | "ready" | "unsupported" | "error";
 type BarModelRuntime = "webgpu" | "wasm";
 export default function CamerasPage() {
@@ -630,7 +638,7 @@ export default function CamerasPage() {
 				barModelStatus !== "ready" ||
 				!barYoloSessionRef.current ||
 				barModelBusyRef.current ||
-				now - lastBarModelAtRef.current < 180
+				now - lastBarModelAtRef.current < MIN_INFERENCE_GAP_MS
 			) {
 				return;
 			}

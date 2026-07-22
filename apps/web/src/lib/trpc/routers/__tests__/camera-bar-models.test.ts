@@ -1,12 +1,21 @@
 import { describe, expect, it } from "bun:test";
 import {
 	BEVERAGE_MODEL,
+	COCO_416_MODEL,
+	COCO_640_MODEL,
 	COCO_CLASSES,
-	COCO_MODEL,
 	resolveAvailableBarModel,
 } from "../../../cameras/bar-models";
 
 describe("bar model registry", () => {
+	it("only falls back to 640 px when the 416 weights are absent", async () => {
+		const model = await resolveAvailableBarModel((async (url: string) => ({
+			ok: String(url).endsWith("yolov8n.onnx"),
+		})) as unknown as typeof fetch);
+		expect(model.id).toBe(COCO_640_MODEL.id);
+		expect(model.inputSize).toBe(640);
+	});
+
 	it("keeps the COCO class order that the ONNX metadata declares", () => {
 		expect(COCO_CLASSES).toHaveLength(80);
 		expect(COCO_CLASSES[39]).toBe("bottle");
@@ -27,13 +36,14 @@ describe("bar model registry", () => {
 		const model = await resolveAvailableBarModel((async (url: string) => ({
 			ok: String(url).includes("yolov8n"),
 		})) as unknown as typeof fetch);
-		expect(model.id).toBe(COCO_MODEL.id);
+		expect(model.id).toBe(COCO_416_MODEL.id);
+		expect(model.inputSize).toBe(416);
 	});
 
 	it("falls back to COCO when the probe request throws", async () => {
 		const model = await resolveAvailableBarModel((() => {
 			throw new Error("offline");
 		}) as unknown as typeof fetch);
-		expect(model.id).toBe(COCO_MODEL.id);
+		expect(model.id).toBe(COCO_640_MODEL.id);
 	});
 });
