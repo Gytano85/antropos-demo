@@ -38,10 +38,6 @@ export type WorkerResponse =
 const PAD_VALUE = 114;
 /** Corte si la descarga deja de avanzar (no si simplemente va lenta). */
 const WEIGHTS_STALL_TIMEOUT_MS = 20_000;
-const BACKEND_INIT_TIMEOUT_MS: Record<"webgpu" | "wasm", number> = {
-	webgpu: 12_000,
-	wasm: 60_000,
-};
 
 type Runtime = {
 	ort: typeof import("onnxruntime-web");
@@ -73,7 +69,11 @@ async function initialise(config: WorkerInitMessage) {
 		const ort = await import("onnxruntime-web");
 		ort.env.wasm.wasmPaths = cameraAssetPath("/ort/");
 
-		const backends: Array<"webgpu" | "wasm"> = supportsWebGpu()
+		// Una sola llamada con la lista de backends: ORT hace el fallback por
+		// dentro. Intentarlos en un bucle con timeout rompia el arranque, porque
+		// un `Promise.race` no cancela la inicializacion perdedora y el segundo
+		// intento moria con "multiple calls to 'initWasm()' detected".
+		const providers: Array<"webgpu" | "wasm"> = supportsWebGpu()
 			? ["webgpu", "wasm"]
 			: ["wasm"];
 
@@ -82,38 +82,21 @@ async function initialise(config: WorkerInitMessage) {
 		// y parecia colgada.
 		const weights = await fetchWeights(config.modelUrl);
 
-		const errors: string[] = [];
-		for (const backend of backends) {
-			try {
-				const session = await createSessionWithTimeout(ort, weights, backend);
-				const inputName = session.inputNames[0];
-				const outputName = session.outputNames[0];
-				if (!inputName || !outputName) {
-					throw new Error("El modelo no expone entradas/salidas utilizables.");
-				}
-				const canvas = new OffscreenCanvas(config.inputSize, config.inputSize);
-				const context = canvas.getContext("2d", { willReadFrequently: true });
-				if (!context) throw new Error("Sin contexto 2D en el worker.");
-
-				runtime = {
-					ort,
-					session,
-					inputName,
-					outputName,
-					canvas,
-					context,
-					config,
-				};
-				post({ type: "ready", backend });
-				return;
-			} catch (error) {
-				errors.push(`${backend}: ${describe(error)}`);
-			}
-		}
-		post({
-			type: "error",
-			message: `No se pudo iniciar el detector (${errors.join(" | ")})`,
+		const session = await ort.InferenceSession.create(weights, {
+			executionProviders: providers,
+			graphOptimizationLevel: "all",
 		});
+		const inputName = session.inputNames[0];
+		const outputName = session.outputNames[0];
+		if (!inputName || !outputName) {
+			throw new Error("El modelo no expone entradas/salidas utilizables.");
+		}
+		const canvas = new OffscreenCanvas(config.inputSize, config.inputSize);
+		const context = canvas.getContext("2d", { willReadFrequently: true });
+		if (!context) throw new Error("Sin contexto 2D en el worker.");
+
+		runtime = { ort, session, inputName, outputName, canvas, context, config };
+		post({ type: "ready", backend: providers[0] ?? "wasm" });
 	} catch (error) {
 		post({ type: "error", message: describe(error) });
 	}
@@ -250,30 +233,6 @@ async function fetchWeights(modelUrl: string): Promise<Uint8Array> {
 	}
 	post({ type: "progress", percent: 88 });
 	return weights;
-}
-
-async function createSessionWithTimeout(
-	ort: typeof import("onnxruntime-web"),
-	weights: Uint8Array,
-	backend: "webgpu" | "wasm",
-) {
-	return await Promise.race([
-		ort.InferenceSession.create(weights, {
-			executionProviders: [backend],
-			graphOptimizationLevel: "all",
-		}),
-		new Promise<never>((_, reject) => {
-			setTimeout(
-				() =>
-					reject(
-						new Error(
-							`Timeout iniciando ${backend}; se probara el siguiente backend.`,
-						),
-					),
-				BACKEND_INIT_TIMEOUT_MS[backend],
-			);
-		}),
-	]);
 }
 
 function toNchw(rgba: Uint8ClampedArray, inputSize: number) {

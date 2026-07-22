@@ -34,10 +34,6 @@ export type YoloSession = {
 const DEFAULT_INPUT_SIZE = 640;
 /** Gris estandar de relleno del letterbox de YOLO. */
 const PAD_VALUE = 114;
-const BACKEND_INIT_TIMEOUT_MS: Record<YoloRuntimeBackend, number> = {
-	webgpu: 12_000,
-	wasm: 60_000,
-};
 
 export async function createYoloSession(
 	config: YoloModelConfig,
@@ -49,54 +45,21 @@ export async function createYoloSession(
 	ort.env.wasm.wasmPaths = cameraAssetPath("/ort/");
 	const inputSize = config.inputSize ?? DEFAULT_INPUT_SIZE;
 
-	const backends: YoloRuntimeBackend[] = supportsWebGpu()
+	// Una sola llamada con la lista de backends: ORT hace el fallback por dentro.
+	// Recorrerlos en un bucle con timeout rompia el arranque, porque un
+	// `Promise.race` no cancela la inicializacion perdedora y el segundo intento
+	// moria con "multiple calls to 'initWasm()' detected".
+	const providers: YoloRuntimeBackend[] = supportsWebGpu()
 		? ["webgpu", "wasm"]
 		: ["wasm"];
 
-	const errors: string[] = [];
-	for (const backend of backends) {
-		try {
-			const session = await createSessionWithTimeout(
-				ort,
-				config.modelUrl,
-				backend,
-			);
-			onBackend?.(backend);
-			return buildSession(ort, session, config, inputSize, backend);
-		} catch (error) {
-			errors.push(
-				`${backend}: ${error instanceof Error ? error.message : String(error)}`,
-			);
-		}
-	}
-
-	throw new Error(
-		`No se pudo iniciar el detector ONNX (${errors.join(" | ")})`,
-	);
-}
-
-async function createSessionWithTimeout(
-	ort: typeof import("onnxruntime-web"),
-	modelUrl: string,
-	backend: YoloRuntimeBackend,
-) {
-	return await Promise.race([
-		ort.InferenceSession.create(modelUrl, {
-			executionProviders: [backend],
-			graphOptimizationLevel: "all",
-		}),
-		new Promise<never>((_, reject) => {
-			setTimeout(
-				() =>
-					reject(
-						new Error(
-							`Timeout iniciando ${backend}; se probara el siguiente backend.`,
-						),
-					),
-				BACKEND_INIT_TIMEOUT_MS[backend],
-			);
-		}),
-	]);
+	const session = await ort.InferenceSession.create(config.modelUrl, {
+		executionProviders: providers,
+		graphOptimizationLevel: "all",
+	});
+	const backend = providers[0] ?? "wasm";
+	onBackend?.(backend);
+	return buildSession(ort, session, config, inputSize, backend);
 }
 
 function buildSession(
