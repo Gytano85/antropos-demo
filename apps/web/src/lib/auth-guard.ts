@@ -1,33 +1,37 @@
-import { cookies, headers } from "next/headers";
 import { eq } from "drizzle-orm";
+import { cookies, headers } from "next/headers";
 import { auth } from "./auth";
-import { db } from "./db";
-import { user } from "./db/schema";
 import {
 	ACTIVE_BRANCH_COOKIE,
 	ensureDefaultOrganization,
 	getBranchAccess,
 } from "./branches/service";
+import { db } from "./db";
+import { user } from "./db/schema";
 
 export async function getIdentityUser() {
-  const cookieStore = await cookies();
-  if (cookieStore.get("antropos_demo_session")?.value === "1") {
-    const demoUser = await getDemoUser();
+	// La sesion real manda sobre la cookie de demo. Al reves, entrar con otra
+	// cuenta no surtia efecto: la cookie seguia ahi de un acceso anterior como
+	// propietario y todas las peticiones se resolvian como ese usuario, asi que
+	// un mesero veia todos los modulos y las dos sucursales.
+	const session = await auth.api.getSession({
+		headers: await headers(),
+	});
 
-    if (demoUser) return demoUser;
-  }
+	if (session?.user) return session.user;
 
-  const session = await auth.api.getSession({
-    headers: await headers(),
-  });
+	const cookieStore = await cookies();
+	if (cookieStore.get("antropos_demo_session")?.value === "1") {
+		const demoUser = await getDemoUser();
 
-  if (session?.user) return session.user;
+		if (demoUser) return demoUser;
+	}
 
-  if (process.env.VERCEL) {
-    return await getDemoUser();
-  }
+	if (process.env.VERCEL) {
+		return await getDemoUser();
+	}
 
-  return null;
+	return null;
 }
 
 export async function getAuthUser() {
@@ -76,12 +80,12 @@ export async function getAuthUser() {
 }
 
 async function getDemoUser() {
-  return await db.query.user.findFirst({
-    where: eq(user.email, "test@example.com"),
-    columns: {
-      id: true,
-      name: true,
-      email: true,
-    },
-  });
+	return await db.query.user.findFirst({
+		where: eq(user.email, "test@example.com"),
+		columns: {
+			id: true,
+			name: true,
+			email: true,
+		},
+	});
 }
