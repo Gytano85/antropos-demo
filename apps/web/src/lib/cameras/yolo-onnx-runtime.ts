@@ -1,3 +1,4 @@
+import { cameraAssetPath } from "./asset-path";
 import type { CocoModelDetection, FrameSize } from "./bar-service-detector";
 import { decodeYoloOutput, letterboxTransform } from "./yolo-onnx";
 
@@ -44,7 +45,7 @@ export async function createYoloSession(
 	const ort = await import("onnxruntime-web");
 	// Servimos los binarios wasm desde /public: por defecto ort los baja de un
 	// CDN, lo que rompe el detector en una barra sin internet.
-	ort.env.wasm.wasmPaths = "/ort/";
+	ort.env.wasm.wasmPaths = cameraAssetPath("/ort/");
 	const inputSize = config.inputSize ?? DEFAULT_INPUT_SIZE;
 
 	const backends: YoloRuntimeBackend[] = supportsWebGpu()

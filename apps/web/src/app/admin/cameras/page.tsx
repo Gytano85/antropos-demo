@@ -164,6 +164,7 @@ export default function CamerasPage() {
 	const [barInferenceMs, setBarInferenceMs] = useState<number | null>(null);
 	const [barModelStatus, setBarModelStatus] = useState<BarModelStatus>("idle");
 	const [barModelProgress, setBarModelProgress] = useState(0);
+	const [barModelError, setBarModelError] = useState<string | null>(null);
 	const [barModelRuntime, setBarModelRuntime] =
 		useState<BarModelRuntime | null>(null);
 	const lastBarModelAtRef = useRef(0);
@@ -379,7 +380,13 @@ export default function CamerasPage() {
 				barYoloSessionPromiseRef.current = null;
 				barModelRuntimeRef.current = null;
 				setBarModelRuntime(null);
+				// Sin el motivo concreto, "no pudo iniciar" no permite distinguir
+				// un 404 de los pesos de un fallo del backend.
+				setBarModelError(
+					error instanceof Error ? error.message : String(error),
+				);
 				setBarModelStatus("error");
+				console.error("[camara] fallo al iniciar el detector", error);
 				throw error;
 			});
 		}
@@ -1329,6 +1336,7 @@ export default function CamerasPage() {
 								modelStatus={barModelStatus}
 								modelProgress={barModelProgress}
 								modelRuntime={barModelRuntime}
+								modelError={barModelError}
 								visibleObjects={visibleDrinkTracks || visibleDrinkCandidates}
 								activeTracks={confirmedBarTracks.length}
 								inferenceMs={barInferenceMs}
@@ -2003,6 +2011,7 @@ function BarEngineStatus({
 	modelStatus,
 	modelProgress,
 	modelRuntime,
+	modelError,
 	visibleObjects,
 	activeTracks,
 	inferenceMs,
@@ -2010,6 +2019,7 @@ function BarEngineStatus({
 	modelStatus: BarModelStatus;
 	modelProgress: number;
 	modelRuntime: BarModelRuntime | null;
+	modelError: string | null;
 	visibleObjects: number;
 	activeTracks: number;
 	inferenceMs: number | null;
@@ -2025,6 +2035,11 @@ function BarEngineStatus({
 							? "El navegador no permite ejecutar el modelo local."
 							: "YOLO no pudo iniciar. Revisa que el modelo y runtime ONNX esten disponibles en /models y /ort."}
 					</div>
+					{modelError ? (
+						<div className="mt-1 break-words font-mono text-xs opacity-80">
+							{modelError}
+						</div>
+					) : null}
 				</div>
 			</div>
 		);

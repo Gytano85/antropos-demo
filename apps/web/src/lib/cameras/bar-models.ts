@@ -1,3 +1,4 @@
+import { cameraAssetPath } from "./asset-path";
 import { BEVERAGE_MODEL_CLASSES } from "./bar-service-detector";
 import type { YoloModelConfig } from "./yolo-onnx-runtime";
 
@@ -106,7 +107,7 @@ export const BEVERAGE_MODEL: BarModelDefinition = {
 	label: "Beverage Containers",
 	description:
 		"Especializado en recipientes de bebida: distingue lata, tarro, copa y botella.",
-	modelUrl: "/models/beverage-containers.onnx",
+	modelUrl: cameraAssetPath("/models/beverage-containers.onnx"),
 	classNames: BEVERAGE_MODEL_CLASSES,
 	scoreThreshold: 0.3,
 };
@@ -122,7 +123,7 @@ export const COCO_416_MODEL: BarModelDefinition = {
 	label: "YOLOv8n COCO 416",
 	description:
 		"Modelo general rapido. Detecta botella, copa y vaso, pero no distingue latas.",
-	modelUrl: "/models/yolov8n-416.onnx",
+	modelUrl: cameraAssetPath("/models/yolov8n-416.onnx"),
 	classNames: COCO_CLASSES,
 	inputSize: 416,
 	scoreThreshold: 0.3,
@@ -134,7 +135,7 @@ export const COCO_640_MODEL: BarModelDefinition = {
 	label: "YOLOv8n COCO 640",
 	description:
 		"Modelo general a resolucion completa: mas lento por inferencia.",
-	modelUrl: "/models/yolov8n.onnx",
+	modelUrl: cameraAssetPath("/models/yolov8n.onnx"),
 	classNames: COCO_CLASSES,
 	inputSize: 640,
 	scoreThreshold: 0.3,

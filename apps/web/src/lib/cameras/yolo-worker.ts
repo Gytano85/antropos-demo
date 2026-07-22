@@ -1,4 +1,5 @@
 /// <reference lib="webworker" />
+import { cameraAssetPath } from "./asset-path";
 import type { CocoModelDetection, FrameSize } from "./bar-service-detector";
 import { decodeYoloOutput, letterboxTransform } from "./yolo-onnx";
 
@@ -70,7 +71,7 @@ scope.addEventListener("message", (event: MessageEvent<WorkerRequest>) => {
 async function initialise(config: WorkerInitMessage) {
 	try {
 		const ort = await import("onnxruntime-web");
-		ort.env.wasm.wasmPaths = "/ort/";
+		ort.env.wasm.wasmPaths = cameraAssetPath("/ort/");
 
 		const backends: Array<"webgpu" | "wasm"> = supportsWebGpu()
 			? ["webgpu", "wasm"]
