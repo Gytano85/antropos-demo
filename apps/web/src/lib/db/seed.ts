@@ -626,44 +626,43 @@ const STATES = [
  * acceso: hay cuentas en una sola sucursal, en ambas, y con permisos distintos.
  */
 async function seedBranches(ownerUid: string, paymentMethodIds: number[]) {
-	// Se puede llamar sobre una base ya sembrada, asi que nunca duplica.
-	const [alreadySeeded] = await db
-		.select({ id: branches.id })
-		.from(branches)
+	// Converge al estado deseado en vez de rendirse ante uno parcial.
+	// `ensureDefaultOrganization` ya crea CENTRO en el primer login, asi que
+	// abortar al ver "alguna sucursal" dejaba NORTE y las cuentas sin crear.
+	const [existingOrganization] = await db.select().from(organizations).limit(1);
+	const organization =
+		existingOrganization ??
+		(
+			await db
+				.insert(organizations)
+				.values({ name: "Antros Club", owner_user_uid: ownerUid })
+				.returning()
+		)[0];
+
+	const centro = await ensureBranch(organization.id, {
+		name: "Sucursal Centro",
+		code: "CENTRO",
+		address: "Av. Reforma 120, Centro",
+		phone: "55 5555 0101",
+		// Comparte scope con el usuario demo: hereda los datos ya sembrados.
+		data_scope_uid: ownerUid,
+	});
+	const norte = await ensureBranch(organization.id, {
+		name: "Sucursal Norte",
+		code: "NORTE",
+		address: "Av. Patriotismo 890, Norte",
+		phone: "55 5555 0202",
+		data_scope_uid: `${ownerUid}::norte`,
+	});
+
+	const [norteProduct] = await db
+		.select({ id: products.id })
+		.from(products)
+		.where(sql`${products.user_uid} = ${norte.data_scope_uid}`)
 		.limit(1);
-	if (alreadySeeded) {
-		return { branches: 0, accounts: 0 };
+	if (!norteProduct) {
+		await seedBranchData(norte.data_scope_uid, paymentMethodIds);
 	}
-
-	const [organization] = await db
-		.insert(organizations)
-		.values({ name: "Antros Club", owner_user_uid: ownerUid })
-		.returning();
-
-	const [centro, norte] = await db
-		.insert(branches)
-		.values([
-			{
-				organization_id: organization.id,
-				name: "Sucursal Centro",
-				code: "CENTRO",
-				address: "Av. Reforma 120, Centro",
-				phone: "55 5555 0101",
-				// Comparte scope con el usuario demo: hereda los datos ya sembrados.
-				data_scope_uid: ownerUid,
-			},
-			{
-				organization_id: organization.id,
-				name: "Sucursal Norte",
-				code: "NORTE",
-				address: "Av. Patriotismo 890, Norte",
-				phone: "55 5555 0202",
-				data_scope_uid: `${ownerUid}::norte`,
-			},
-		])
-		.returning();
-
-	await seedBranchData(norte.data_scope_uid, paymentMethodIds);
 
 	const accounts: Array<{
 		email: string;
@@ -703,14 +702,9 @@ async function seedBranches(ownerUid: string, paymentMethodIds: number[]) {
 	];
 
 	// El propietario entra a las dos sucursales.
-	const memberships: Array<{
-		branch_id: number;
-		user_uid: string;
-		role: string;
-	}> = [
-		{ branch_id: centro.id, user_uid: ownerUid, role: "owner" },
-		{ branch_id: norte.id, user_uid: ownerUid, role: "owner" },
-	];
+	let created = 0;
+	created += await ensureMembership(centro.id, ownerUid, "owner");
+	created += await ensureMembership(norte.id, ownerUid, "owner");
 
 	for (const account of accounts) {
 		// La cuenta puede existir de una siembra anterior; registrarla otra vez
@@ -733,17 +727,63 @@ async function seedBranches(ownerUid: string, paymentMethodIds: number[]) {
 			).user.id;
 
 		for (const membership of account.memberships) {
-			memberships.push({
-				branch_id: membership.branchId,
-				user_uid: accountUid,
-				role: membership.role,
-			});
+			created += await ensureMembership(
+				membership.branchId,
+				accountUid,
+				membership.role,
+			);
 		}
 	}
 
-	await db.insert(branchMemberships).values(memberships);
+	return { branches: 2, accounts: accounts.length + 1, memberships: created };
+}
 
-	return { branches: 2, accounts: accounts.length + 1 };
+/** Devuelve la sucursal con ese codigo, creandola solo si falta. */
+async function ensureBranch(
+	organizationId: number,
+	values: {
+		name: string;
+		code: string;
+		address: string;
+		phone: string;
+		data_scope_uid: string;
+	},
+) {
+	const [existing] = await db
+		.select()
+		.from(branches)
+		.where(
+			sql`${branches.organization_id} = ${organizationId} AND ${branches.code} = ${values.code}`,
+		)
+		.limit(1);
+	if (existing) return existing;
+
+	const [created] = await db
+		.insert(branches)
+		.values({ organization_id: organizationId, ...values })
+		.returning();
+	return created;
+}
+
+/** Alta de membresia sin duplicar; devuelve 1 si la creo. */
+async function ensureMembership(
+	branchId: number,
+	userUid: string,
+	role: string,
+) {
+	const [existing] = await db
+		.select({ id: branchMemberships.id })
+		.from(branchMemberships)
+		.where(
+			sql`${branchMemberships.branch_id} = ${branchId} AND ${branchMemberships.user_uid} = ${userUid}`,
+		)
+		.limit(1);
+	if (existing) return 0;
+
+	await db
+		.insert(branchMemberships)
+		.values({ branch_id: branchId, user_uid: userUid, role });
+	return 1;
 }
 
 /** Catalogo y ventas propias de una sucursal, para que no aparezca vacia. */
