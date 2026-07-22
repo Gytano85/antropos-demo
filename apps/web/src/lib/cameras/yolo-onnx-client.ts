@@ -9,11 +9,15 @@ import type { WorkerResponse } from "./yolo-worker";
  * no tenga que saber donde corre el modelo.
  */
 
+/** Region del frame que se envia al modelo, en pixeles del canvas. */
+export type CropRect = { x: number; y: number; width: number; height: number };
+
 export type YoloClient = {
 	backend: YoloRuntimeBackend;
 	detect: (
 		source: CanvasImageSource,
 		frame: FrameSize,
+		crop?: CropRect,
 	) => Promise<CocoModelDetection[]>;
 	dispose: () => void;
 };
@@ -54,8 +58,8 @@ export async function createBarDetector(
 	const session = await createYoloSession(config, onBackend);
 	return {
 		backend: session.backend,
-		detect: (source, frame) =>
-			session.detect(source as HTMLCanvasElement, frame),
+		detect: (source, frame, crop) =>
+			session.detect(source as HTMLCanvasElement, frame, crop),
 		dispose: () => {
 			void session.dispose();
 		},
@@ -145,12 +149,22 @@ export async function createYoloWorkerClient(
 
 	return {
 		backend,
-		detect: async (source, frame) => {
+		detect: async (source, frame, crop) => {
 			if (disposed) return [];
 			if (frame.width <= 0 || frame.height <= 0) return [];
 
-			// El bitmap se transfiere sin copiar pixeles y el worker lo cierra.
-			const bitmap = await createImageBitmap(source);
+			// Recortar aqui hace que el objeto ocupe muchos mas pixeles del
+			// cuadro que ve el modelo. El bitmap se transfiere sin copiar y el
+			// worker lo cierra.
+			const bitmap = crop
+				? await createImageBitmap(
+						source,
+						crop.x,
+						crop.y,
+						crop.width,
+						crop.height,
+					)
+				: await createImageBitmap(source);
 			const id = nextId++;
 
 			return new Promise<CocoModelDetection[]>((resolve, reject) => {

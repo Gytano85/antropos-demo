@@ -85,5 +85,4 @@ apps/web/public/ort/
 # viaja en el repo. Sin el, produccion caia al de 640 px (9.1 s de carga contra
 # 1.1 s) y el detector se quedaba "preparando" hasta agotar el timeout.
 apps/web/public/models/*
-!apps/web/public/models/yolov8n-320.onnx
 !apps/web/public/models/yolov8n-416.onnx

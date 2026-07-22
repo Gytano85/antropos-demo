@@ -102,7 +102,7 @@ export const COCO_CLASSES = [
  */
 const DRINK_SCORE_THRESHOLD = 0.2;
 
-export type BarModelId = "beverage" | "coco320" | "coco416" | "coco640";
+export type BarModelId = "beverage" | "coco416" | "coco640";
 
 export type BarModelDefinition = YoloModelConfig & {
 	id: BarModelId;
@@ -117,25 +117,6 @@ export const BEVERAGE_MODEL: BarModelDefinition = {
 		"Especializado en recipientes de bebida: distingue lata, tarro, copa y botella.",
 	modelUrl: cameraAssetPath("/models/beverage-containers.onnx"),
 	classNames: BEVERAGE_MODEL_CLASSES,
-	scoreThreshold: DRINK_SCORE_THRESHOLD,
-};
-
-/**
- * COCO re-exportado a 320 px: el mas rapido y por eso el preferido.
- *
- * Una bebida que cruza rapido solo es visible unas decimas de segundo, y para
- * contarla hacen falta al menos dos detecciones a cada lado de la linea. Medido
- * en este equipo: 640 px -> 5.6 lecturas/s, 416 px -> 12.8, 320 px -> ~20. Mas
- * lecturas por segundo es lo que decide si un paso rapido se cuenta o se pierde.
- */
-export const COCO_320_MODEL: BarModelDefinition = {
-	id: "coco320",
-	label: "YOLOv8n COCO 320",
-	description:
-		"Modelo general muy rapido. Prioriza captar pasos rapidos sobre el detalle fino.",
-	modelUrl: cameraAssetPath("/models/yolov8n-320.onnx"),
-	classNames: COCO_CLASSES,
-	inputSize: 320,
 	scoreThreshold: DRINK_SCORE_THRESHOLD,
 };
 
@@ -174,7 +155,6 @@ export const COCO_640_MODEL: BarModelDefinition = {
  */
 export const BAR_MODEL_PREFERENCE: BarModelDefinition[] = [
 	BEVERAGE_MODEL,
-	COCO_320_MODEL,
 	COCO_416_MODEL,
 	COCO_640_MODEL,
 ];

@@ -26,6 +26,7 @@ export type YoloSession = {
 	detect: (
 		source: HTMLCanvasElement,
 		frame: FrameSize,
+		crop?: { x: number; y: number; width: number; height: number },
 	) => Promise<CocoModelDetection[]>;
 	dispose: () => Promise<void>;
 };
@@ -118,7 +119,7 @@ function buildSession(
 
 	return {
 		backend,
-		detect: async (source, frame) => {
+		detect: async (source, frame, crop) => {
 			if (!workContext || frame.width <= 0 || frame.height <= 0) return [];
 
 			const { scale, padX, padY } = letterboxTransform(frame, inputSize);
@@ -126,10 +127,10 @@ function buildSession(
 			workContext.fillRect(0, 0, inputSize, inputSize);
 			workContext.drawImage(
 				source,
-				0,
-				0,
-				frame.width,
-				frame.height,
+				crop?.x ?? 0,
+				crop?.y ?? 0,
+				crop?.width ?? frame.width,
+				crop?.height ?? frame.height,
 				padX,
 				padY,
 				frame.width * scale,

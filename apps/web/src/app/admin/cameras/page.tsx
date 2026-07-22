@@ -57,6 +57,7 @@ import {
 	itemLabel,
 	normalizeLine,
 	placeCountingGate,
+	regionToPixels,
 	trackingRegion,
 	updateBarTracks,
 } from "@/lib/cameras/bar-service-tracker";
@@ -661,14 +662,25 @@ export default function CamerasPage() {
 			const inferenceStartedAt = performance.now();
 			// El worker recibe el canvas completo y hace su propio letterbox:
 			// el canvas intermedio solo anadia un redimensionado por frame.
-			const crop = { x: 0, y: 0, width: canvas.width, height: canvas.height };
+			// El modelo mira solo la zona de conteo, no el frame completo. Con
+			// 1280x720 encogido a 416 px el vaso quedaba en un punado de pixeles y
+			// costaba detectarlo incluso quieto; recortando a la banda que ya se
+			// dibuja en pantalla ocupa mas del doble de area util, con el mismo
+			// coste de inferencia.
+			const region = trackingRegion(countingLine, countingDirection);
+			const crop = regionToPixels(region, canvas.width, canvas.height);
+			// Las cajas vuelven en coordenadas del recorte; basta desplazarlas.
 			const scaleX = 1;
 			const scaleY = 1;
-			const modelFrame = { width: canvas.width, height: canvas.height };
+			const modelFrame = { width: crop.width, height: crop.height };
 			// Deliberadamente sin await: si esta funcion esperara a la inferencia,
 			// el bucle de dibujo quedaria bloqueado por `busyRef` mientras el
 			// modelo trabaja y volveriamos a ver el overlay a saltos.
-			const inference = barYoloSessionRef.current.detect(canvas, modelFrame);
+			const inference = barYoloSessionRef.current.detect(
+				canvas,
+				modelFrame,
+				crop,
+			);
 			void (async () => {
 				try {
 					const raw = await inference;

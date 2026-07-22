@@ -510,6 +510,26 @@ export function normalizeLine(line: CountingLine): CountingLine {
 	};
 }
 
+/**
+ * Pasa una region normalizada a pixeles del canvas.
+ *
+ * El modelo recibe solo ese recorte, asi que devuelve cajas en coordenadas del
+ * recorte: sumarle `x`/`y` es lo que las devuelve al canvas. Si esto se desfasa,
+ * los recuadros aparecen corridos respecto al objeto real.
+ */
+export function regionToPixels(
+	region: { x: number; y: number; width: number; height: number },
+	canvasWidth: number,
+	canvasHeight: number,
+) {
+	return {
+		x: Math.round(region.x * canvasWidth),
+		y: Math.round(region.y * canvasHeight),
+		width: Math.max(1, Math.round(region.width * canvasWidth)),
+		height: Math.max(1, Math.round(region.height * canvasHeight)),
+	};
+}
+
 export function trackingRegion(
 	line: CountingLine,
 	direction: CountingDirection,

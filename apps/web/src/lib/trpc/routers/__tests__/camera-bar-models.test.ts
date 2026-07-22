@@ -1,7 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import {
 	BEVERAGE_MODEL,
-	COCO_320_MODEL,
 	COCO_416_MODEL,
 	COCO_640_MODEL,
 	COCO_CLASSES,
@@ -9,17 +8,10 @@ import {
 } from "../../../cameras/bar-models";
 
 describe("bar model registry", () => {
-	it("steps down to 416 px when only that model is present", async () => {
-		const model = await resolveAvailableBarModel((async (url: string) => ({
-			ok: String(url).endsWith("yolov8n-416.onnx"),
-		})) as unknown as typeof fetch);
-		expect(model.id).toBe(COCO_416_MODEL.id);
-	});
-
 	it("keeps a low score threshold so blurred fast passes still register", () => {
 		// Un objeto en movimiento pierde confianza; con 0.3 se perdian los pasos
 		// rapidos, que son justo los que hay que contar.
-		for (const model of [COCO_320_MODEL, COCO_416_MODEL]) {
+		for (const model of [COCO_416_MODEL]) {
 			expect(model.scoreThreshold).toBeLessThanOrEqual(0.2);
 		}
 	});
@@ -52,8 +44,8 @@ describe("bar model registry", () => {
 		const model = await resolveAvailableBarModel((async (url: string) => ({
 			ok: String(url).includes("yolov8n"),
 		})) as unknown as typeof fetch);
-		expect(model.id).toBe(COCO_320_MODEL.id);
-		expect(model.inputSize).toBe(320);
+		expect(model.id).toBe(COCO_416_MODEL.id);
+		expect(model.inputSize).toBe(416);
 	});
 
 	it("falls back to COCO when the probe request throws", async () => {

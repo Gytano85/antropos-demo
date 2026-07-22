@@ -4,6 +4,8 @@ import {
 	type BarTrack,
 	elapsedMatchScale,
 	mergeDuplicateTracks,
+	regionToPixels,
+	trackingRegion,
 	updateBarTracks,
 } from "../../../cameras/bar-service-tracker";
 
@@ -333,5 +335,47 @@ describe("association window vs sampling rate", () => {
 			{ ...options, now: 300 },
 		);
 		expect(second.tracks.length).toBeGreaterThan(1);
+	});
+});
+
+describe("detector crop region", () => {
+	it("covers the counting band without leaving the frame", () => {
+		const line = { start: { x: 0.5, y: 0.1 }, end: { x: 0.5, y: 0.9 } };
+		const region = trackingRegion(line, "left_to_right");
+		const crop = regionToPixels(region, 1280, 720);
+
+		expect(crop.x).toBeGreaterThanOrEqual(0);
+		expect(crop.y).toBeGreaterThanOrEqual(0);
+		expect(crop.x + crop.width).toBeLessThanOrEqual(1280);
+		expect(crop.y + crop.height).toBeLessThanOrEqual(720);
+		// La linea de conteo tiene que caer dentro del recorte, o el modelo
+		// nunca veria el objeto cruzarla.
+		expect(crop.x).toBeLessThan(0.5 * 1280);
+		expect(crop.x + crop.width).toBeGreaterThan(0.5 * 1280);
+	});
+
+	it("makes the object noticeably larger for the model", () => {
+		const line = { start: { x: 0.5, y: 0.1 }, end: { x: 0.5, y: 0.9 } };
+		const crop = regionToPixels(
+			trackingRegion(line, "left_to_right"),
+			1280,
+			720,
+		);
+		// Un vaso de 60x120 px ocupa mucha mas area util tras el letterbox de 416
+		// al recortar que enviando el frame completo.
+		const fullScale = 416 / 1280;
+		const cropScale = 416 / crop.width;
+		expect(cropScale / fullScale).toBeGreaterThan(1.4);
+	});
+
+	it("keeps the crop inside a gate placed near the frame edge", () => {
+		const line = { start: { x: 0.95, y: 0.1 }, end: { x: 0.95, y: 0.9 } };
+		const crop = regionToPixels(
+			trackingRegion(line, "left_to_right"),
+			1280,
+			720,
+		);
+		expect(crop.x).toBeGreaterThanOrEqual(0);
+		expect(crop.x + crop.width).toBeLessThanOrEqual(1280);
 	});
 });

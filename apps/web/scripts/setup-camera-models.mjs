@@ -75,11 +75,9 @@ async function downloadBaseModel() {
 	const target = join(modelsPublic, BASE_MODEL.file);
 	// El de 416 px viaja en el repo y es el preferido; bajar ademas el de 640 px
 	// solo anadiria 13 MB al build para un respaldo que no se usaria.
-	for (const fast of ["yolov8n-320.onnx", "yolov8n-416.onnx"]) {
-		if (await exists(join(modelsPublic, fast))) {
-			console.log(`✓ ${fast} presente, se omite el modelo de 640 px`);
-			return;
-		}
+	if (await exists(join(modelsPublic, "yolov8n-416.onnx"))) {
+		console.log("✓ yolov8n-416.onnx presente, se omite el modelo de 640 px");
+		return;
 	}
 	if (await exists(target)) {
 		console.log(`✓ ${BASE_MODEL.file} ya existe, se omite la descarga`);
