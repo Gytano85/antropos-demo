@@ -49,6 +49,7 @@ const messages: Messages = {
 		visionOps: "Operación visual",
 		digitalMenu: "Menú digital",
 		menuEngine: "Motor del menú",
+		sales: "Ventas",
 		cashier: "Caja",
 		inventory: "Inventario",
 		products: "Inventario",

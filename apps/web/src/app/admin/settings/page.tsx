@@ -28,8 +28,8 @@ import { applyAdminTheme } from "@/components/admin-theme-applier";
 import { ProductImage } from "@/components/product-image";
 import { HEX_COLOR_HINT, normalizeHexColor } from "@/lib/settings/hex-color";
 import { useTRPC } from "@/lib/trpc/client";
-import { BranchesSection } from "../branches/page";
-import { PaymentMethodsSection } from "../payment-methods/page";
+import { BranchesSection } from "../branches/section";
+import { PaymentMethodsSection } from "../payment-methods/section";
 
 const tabs = [
 	{ id: "general", label: "General", icon: Building2Icon },

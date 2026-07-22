@@ -47,6 +47,7 @@ interface NavItem {
 		| "paymentMethods"
 		| "invoices"
 		| "fiscalSettings"
+		| "sales"
 		| "settings"
 		| "tables"
 		| "menuEngine"
@@ -104,8 +105,11 @@ const navItems: NavItem[] = [
 		permission: "menu.view",
 	},
 	{
-		href: "/admin/cashier",
-		labelKey: "cashier",
+		// Caja, Pedidos y Clientes viven aqui como pestañas. Basta `sales.view`
+		// para entrar: dentro, cada pestaña vuelve a comprobar su propio permiso,
+		// asi que quien solo administra clientes tambien encuentra el modulo.
+		href: "/admin/sales",
+		labelKey: "sales",
 		icon: DollarSignIcon,
 		permission: "sales.view",
 	},
@@ -114,18 +118,6 @@ const navItems: NavItem[] = [
 		labelKey: "inventory",
 		icon: PackageIcon,
 		permission: "inventory.view",
-	},
-	{
-		href: "/admin/customers",
-		labelKey: "customers",
-		icon: UsersIcon,
-		permission: "customers.manage",
-	},
-	{
-		href: "/admin/orders",
-		labelKey: "orders",
-		icon: ShoppingBagIcon,
-		permission: "sales.view",
 	},
 	{
 		href: "/admin/fiscal",
