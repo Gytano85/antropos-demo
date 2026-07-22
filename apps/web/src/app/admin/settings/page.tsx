@@ -26,6 +26,7 @@ import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { applyAdminTheme } from "@/components/admin-theme-applier";
 import { ProductImage } from "@/components/product-image";
+import { HEX_COLOR_HINT, normalizeHexColor } from "@/lib/settings/hex-color";
 import { useTRPC } from "@/lib/trpc/client";
 import { BranchesSection } from "../branches/page";
 import { PaymentMethodsSection } from "../payment-methods/page";
@@ -168,7 +169,39 @@ export default function SettingsPage() {
 		});
 	};
 
-	const save = () => updateMutation.mutate(form);
+	const COLOR_FIELDS = [
+		"primary_color",
+		"accent_color",
+		"background_color",
+		"card_color",
+		"text_color",
+	] as const;
+
+	/**
+	 * Normaliza antes de enviar. El formulario permite escribir el color a mano,
+	 * asi que pasa por estados invalidos; antes se enviaban tal cual y el guardado
+	 * volvia como error del servidor en vez de senalar el campo.
+	 */
+	const save = () => {
+		const title = form.company_title.trim();
+		if (!title) {
+			toast.error("Escribe un nombre para el negocio.");
+			return;
+		}
+
+		const payload = { ...form, company_title: title };
+		for (const field of COLOR_FIELDS) {
+			const normalized = normalizeHexColor(form[field]);
+			if (!normalized) {
+				toast.error(`Color inválido en la paleta. ${HEX_COLOR_HINT}`);
+				return;
+			}
+			payload[field] = normalized;
+		}
+
+		setForm(payload);
+		updateMutation.mutate(payload);
+	};
 
 	const saveProductImage = (id: number, image_url: string) => {
 		updateProductMutation.mutate({ id, image_url });
@@ -382,13 +415,21 @@ function ColorField({
 			<div className="flex gap-2">
 				<Input
 					type="color"
-					value={value}
+					value={normalizeHexColor(value) ?? "#000000"}
 					onChange={(event) => onChange(event.target.value)}
 					className="h-10 w-14 p-1"
 				/>
 				<Input
 					value={value}
 					onChange={(event) => onChange(event.target.value)}
+					onBlur={(event) => {
+						// Al salir del campo se acepta lo interpretable (`abc`, sin
+						// almohadilla) y se revierte lo que no, para que el selector de
+						// color y el texto no queden desincronizados.
+						const normalized = normalizeHexColor(event.target.value);
+						if (normalized && normalized !== value) onChange(normalized);
+					}}
+					aria-invalid={normalizeHexColor(value) === null}
 				/>
 			</div>
 		</div>

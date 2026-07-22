@@ -19,6 +19,7 @@ const TABLES: PgTable[] = [
 	schema.recipeItems,
 	schema.ingredientMovements,
 	schema.transactions,
+	schema.appSettings,
 	schema.cities,
 	schema.fiscalSettings,
 	schema.invoices,
