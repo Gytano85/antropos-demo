@@ -5,10 +5,13 @@ import { productPhotoUrl } from "../product-photos";
 import { db } from ".";
 import { ensureDemoRecipes } from "./demo-recipes";
 import {
+	branches,
+	branchMemberships,
 	cities,
 	customers,
 	orderItems,
 	orders,
+	organizations,
 	paymentMethods,
 	products,
 	transactions,
@@ -341,6 +344,16 @@ export async function seed() {
 		Number(demoOrderCount.count) >= 20
 	) {
 		await ensureDemoRecipes(demoUser.id);
+		// Una base ya sembrada sale por aqui. Sin esto las sucursales solo
+		// existirian tras borrar todo, que es justo lo que no queremos pedirle a
+		// nadie con datos reales.
+		const existingMethods = await db
+			.select({ id: paymentMethods.id })
+			.from(paymentMethods);
+		await seedBranches(
+			demoUser.id,
+			existingMethods.map((method) => method.id),
+		);
 		return;
 	}
 
@@ -352,6 +365,10 @@ export async function seed() {
 		await db.execute(
 			sql.raw(`
 			TRUNCATE TABLE
+				branch_role_permissions,
+				branch_memberships,
+				branches,
+				organizations,
 				ingredient_counts,
 				ingredient_movements,
 				recipe_items,
@@ -550,6 +567,9 @@ export async function seed() {
 		});
 	}
 
+	// ── Organización, sucursales y cuentas por rol ───────────────────────────
+	const branchSummary = await seedBranches(userId, paymentMethodIds);
+
 	// ── Cities (IBGE) ─────────────────────────────────────────────────────────
 	const cityCount =
 		process.env.DEMO_LIGHT_SEED === "1" ? 0 : await seedCities();
@@ -558,7 +578,8 @@ export async function seed() {
 		`Seeded: 3 payment methods, 1 demo user (${DEMO_EMAIL} / ${DEMO_PASSWORD}), ` +
 			`${customerValues.length} customers, ${productValues.length} products, ` +
 			`${orderCount} orders, ${expenseCount} expense transactions, ` +
-			`${cityCount} cities`,
+			`${cityCount} cities, ${branchSummary.branches} branches, ` +
+			`${branchSummary.accounts} role accounts`,
 	);
 }
 
@@ -591,6 +612,218 @@ const STATES = [
 	"SP",
 	"TO",
 ];
+
+/**
+ * Sucursales de demostracion y una cuenta por rol.
+ *
+ * El aislamiento por sucursal funciona porque `getAuthUser` sustituye el id del
+ * usuario por el `data_scope_uid` de la sucursal activa, y los routers ya filtran
+ * por ese id. Por eso CENTRO reutiliza el uid del usuario demo (hereda todos los
+ * datos ya sembrados) y NORTE recibe un scope propio con su propio catalogo: sin
+ * datos propios se veria vacia y pareceria rota.
+ *
+ * Las membresias son deliberadamente asimetricas para que se note el control de
+ * acceso: hay cuentas en una sola sucursal, en ambas, y con permisos distintos.
+ */
+async function seedBranches(ownerUid: string, paymentMethodIds: number[]) {
+	// Se puede llamar sobre una base ya sembrada, asi que nunca duplica.
+	const [alreadySeeded] = await db
+		.select({ id: branches.id })
+		.from(branches)
+		.limit(1);
+	if (alreadySeeded) {
+		return { branches: 0, accounts: 0 };
+	}
+
+	const [organization] = await db
+		.insert(organizations)
+		.values({ name: "Antros Club", owner_user_uid: ownerUid })
+		.returning();
+
+	const [centro, norte] = await db
+		.insert(branches)
+		.values([
+			{
+				organization_id: organization.id,
+				name: "Sucursal Centro",
+				code: "CENTRO",
+				address: "Av. Reforma 120, Centro",
+				phone: "55 5555 0101",
+				// Comparte scope con el usuario demo: hereda los datos ya sembrados.
+				data_scope_uid: ownerUid,
+			},
+			{
+				organization_id: organization.id,
+				name: "Sucursal Norte",
+				code: "NORTE",
+				address: "Av. Patriotismo 890, Norte",
+				phone: "55 5555 0202",
+				data_scope_uid: `${ownerUid}::norte`,
+			},
+		])
+		.returning();
+
+	await seedBranchData(norte.data_scope_uid, paymentMethodIds);
+
+	const accounts: Array<{
+		email: string;
+		name: string;
+		memberships: Array<{ branchId: number; role: string }>;
+	}> = [
+		{
+			email: "gerente@example.com",
+			name: "Gerente Centro",
+			memberships: [{ branchId: centro.id, role: "manager" }],
+		},
+		{
+			email: "cajero@example.com",
+			name: "Cajero Centro",
+			memberships: [{ branchId: centro.id, role: "cashier" }],
+		},
+		{
+			email: "mesero@example.com",
+			name: "Mesero Norte",
+			// Solo en NORTE: sirve para comprobar que no ve nada de CENTRO.
+			memberships: [{ branchId: norte.id, role: "server" }],
+		},
+		{
+			email: "inventario@example.com",
+			name: "Inventario Multi",
+			// En ambas: sirve para probar el cambio de sucursal.
+			memberships: [
+				{ branchId: centro.id, role: "inventory" },
+				{ branchId: norte.id, role: "inventory" },
+			],
+		},
+		{
+			email: "auditor@example.com",
+			name: "Auditor Norte",
+			memberships: [{ branchId: norte.id, role: "auditor" }],
+		},
+	];
+
+	// El propietario entra a las dos sucursales.
+	const memberships: Array<{
+		branch_id: number;
+		user_uid: string;
+		role: string;
+	}> = [
+		{ branch_id: centro.id, user_uid: ownerUid, role: "owner" },
+		{ branch_id: norte.id, user_uid: ownerUid, role: "owner" },
+	];
+
+	for (const account of accounts) {
+		// La cuenta puede existir de una siembra anterior; registrarla otra vez
+		// fallaria por correo duplicado.
+		const [existing] = await db
+			.select({ id: user.id })
+			.from(user)
+			.where(sql`${user.email} = ${account.email}`)
+			.limit(1);
+		const accountUid =
+			existing?.id ??
+			(
+				await auth.api.signUpEmail({
+					body: {
+						name: account.name,
+						email: account.email,
+						password: DEMO_PASSWORD,
+					},
+				})
+			).user.id;
+
+		for (const membership of account.memberships) {
+			memberships.push({
+				branch_id: membership.branchId,
+				user_uid: accountUid,
+				role: membership.role,
+			});
+		}
+	}
+
+	await db.insert(branchMemberships).values(memberships);
+
+	return { branches: 2, accounts: accounts.length + 1 };
+}
+
+/** Catalogo y ventas propias de una sucursal, para que no aparezca vacia. */
+async function seedBranchData(scopeUid: string, paymentMethodIds: number[]) {
+	const catalogue = DEMO_PRODUCTS.filter((product) =>
+		["cervezas", "cocteles", "snacks"].includes(product.category),
+	);
+
+	const insertedProducts = await db
+		.insert(products)
+		.values(
+			catalogue.map((product) => ({
+				name: product.name,
+				description: product.description,
+				image_url: getProductImageUrl(product.category, product.name),
+				price: product.price,
+				in_stock: product.stock,
+				user_uid: scopeUid,
+				category: product.category,
+			})),
+		)
+		.returning();
+
+	const insertedCustomers = await db
+		.insert(customers)
+		.values(
+			DEMO_CUSTOMERS.slice(0, 6).map(([name, email, phone]) => ({
+				name,
+				// El correo es unico por cliente: sin sufijo chocaria con CENTRO.
+				email: `norte.${email}`,
+				phone,
+				user_uid: scopeUid,
+				status: "active",
+				created_at: faker.date.recent({ days: 60 }),
+			})),
+		)
+		.returning();
+
+	for (let index = 0; index < 12; index += 1) {
+		const customer = faker.helpers.arrayElement(insertedCustomers);
+		const items = faker.helpers.arrayElements(
+			insertedProducts,
+			faker.number.int({ min: 1, max: 4 }),
+		);
+		const total = items.reduce((sum, product) => sum + product.price, 0);
+		const createdAt = faker.date.recent({ days: 30 });
+
+		const [order] = await db
+			.insert(orders)
+			.values({
+				customer_id: customer.id,
+				total_amount: total,
+				user_uid: scopeUid,
+				status: "completed",
+				created_at: createdAt,
+			})
+			.returning();
+
+		await db.insert(orderItems).values(
+			items.map((product) => ({
+				order_id: order.id,
+				product_id: product.id,
+				quantity: 1,
+				price: product.price,
+			})),
+		);
+
+		await db.insert(transactions).values({
+			description: `Venta Norte #${order.id}`,
+			order_id: order.id,
+			payment_method_id: faker.helpers.arrayElement(paymentMethodIds),
+			amount: total,
+			user_uid: scopeUid,
+			type: "income",
+			category: "selling",
+			status: "completed",
+			created_at: createdAt,
+		});
+	}
+}
 
 async function seedCities(): Promise<number> {
 	const existingCities = await db
