@@ -1,5 +1,5 @@
 import { faker } from "@faker-js/faker";
-import { sql } from "drizzle-orm";
+import { isNull, sql } from "drizzle-orm";
 import { auth } from "../auth";
 import { productPhotoUrl } from "../product-photos";
 import { db } from ".";
@@ -290,7 +290,10 @@ function getProductImageUrl(category: string, name: string) {
 		"gin tonic": productPhotoUrl("Gin Tonic", category),
 		azulito: productPhotoUrl("Azulito", category),
 		"tequila don julio 70": productPhotoUrl("Tequila Don Julio 70", category),
-		"whisky johnnie walker black": productPhotoUrl("Whisky Johnnie Walker Black", category),
+		"whisky johnnie walker black": productPhotoUrl(
+			"Whisky Johnnie Walker Black",
+			category,
+		),
 		"vodka grey goose": productPhotoUrl("Vodka Grey Goose", category),
 		"ron zacapa 23": productPhotoUrl("Ron Zacapa 23", category),
 		"agua natural": productPhotoUrl("Agua Natural", category),
@@ -306,7 +309,10 @@ function getProductImageUrl(category: string, name: string) {
 		"cover general": productPhotoUrl("Cover General", category),
 		"cover evento especial": productPhotoUrl("Cover Evento Especial", category),
 		"reservación mesa vip": productPhotoUrl("Reservación Mesa VIP", category),
-		"servicio de mezcladores": productPhotoUrl("Servicio de Mezcladores", category),
+		"servicio de mezcladores": productPhotoUrl(
+			"Servicio de Mezcladores",
+			category,
+		),
 	};
 	if (byName[lower]) return byName[lower];
 	return productPhotoUrl(name, category);
@@ -343,7 +349,8 @@ export async function seed() {
 		.from(paymentMethods);
 
 	if (demoUser || existing[0].count > 0) {
-		await db.execute(sql.raw(`
+		await db.execute(
+			sql.raw(`
 			TRUNCATE TABLE
 				ingredient_counts,
 				ingredient_movements,
@@ -362,7 +369,8 @@ export async function seed() {
 				account,
 				"user"
 			RESTART IDENTITY CASCADE
-		`));
+		`),
+		);
 	}
 
 	// ── Payment Methods ──────────────────────────────────────────────────────
@@ -382,6 +390,14 @@ export async function seed() {
 		body: { name: DEMO_NAME, email: DEMO_EMAIL, password: DEMO_PASSWORD },
 	});
 	const userId = signUpRes.user.id;
+
+	// Los metodos de pago se insertan antes de existir el usuario; ahora que hay
+	// uno se les asigna dueño, o quedarian como catalogo heredado de solo lectura
+	// y la pantalla de metodos de pago no dejaria editarlos.
+	await db
+		.update(paymentMethods)
+		.set({ user_uid: userId })
+		.where(isNull(paymentMethods.user_uid));
 
 	// ── Customers ────────────────────────────────────────────────────────────
 	const customerValues = DEMO_CUSTOMERS.map(([name, email, phone], index) => ({
@@ -535,7 +551,8 @@ export async function seed() {
 	}
 
 	// ── Cities (IBGE) ─────────────────────────────────────────────────────────
-	const cityCount = process.env.DEMO_LIGHT_SEED === "1" ? 0 : await seedCities();
+	const cityCount =
+		process.env.DEMO_LIGHT_SEED === "1" ? 0 : await seedCities();
 
 	console.log(
 		`Seeded: 3 payment methods, 1 demo user (${DEMO_EMAIL} / ${DEMO_PASSWORD}), ` +

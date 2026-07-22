@@ -1,5 +1,5 @@
 import { TRPCError } from "@trpc/server";
-import { desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { z } from "zod/v4";
 import { db } from "@/lib/db";
 import {
@@ -240,10 +240,20 @@ export const camerasRouter = router({
 			};
 
 			if (input.id) {
-				await db
+				// El filtro por dueño no es opcional: sin el, mandar el id de una
+				// camara ajena la sobrescribia y ademas la reasignaba a quien
+				// llamaba, porque `values` fija `user_uid` al usuario actual.
+				const [updated] = await db
 					.update(cameraDevices)
 					.set(values)
-					.where(eq(cameraDevices.id, input.id));
+					.where(
+						and(
+							eq(cameraDevices.id, input.id),
+							eq(cameraDevices.user_uid, ctx.user.id),
+						),
+					)
+					.returning();
+				if (!updated) throw new TRPCError({ code: "NOT_FOUND" });
 				return { ok: true };
 			}
 

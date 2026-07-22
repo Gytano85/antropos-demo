@@ -8,6 +8,7 @@ import {
 	serial,
 	text,
 	timestamp,
+	uniqueIndex,
 	varchar,
 } from "drizzle-orm/pg-core";
 
@@ -373,11 +374,29 @@ export const ingredientCounts = pgTable("ingredient_counts", {
 });
 
 // ── Payment Methods ─────────────────────────────────────────────────────────
-export const paymentMethods = pgTable("payment_methods", {
-	id: serial("id").primaryKey(),
-	name: varchar("name", { length: 50 }).notNull().unique(),
-	created_at: timestamp("created_at").defaultNow(),
-});
+/**
+ * Catalogo de metodos de pago por cuenta.
+ *
+ * `user_uid` es nullable a proposito: las filas creadas antes de que existiera
+ * la columna quedan como catalogo heredado, visible para todos pero que nadie
+ * puede renombrar ni borrar. El nombre es unico por cuenta, no global: siendolo,
+ * el primer restaurante que creaba "Efectivo" impedia que ningun otro lo usara.
+ */
+export const paymentMethods = pgTable(
+	"payment_methods",
+	{
+		id: serial("id").primaryKey(),
+		name: varchar("name", { length: 50 }).notNull(),
+		user_uid: varchar("user_uid", { length: 255 }),
+		created_at: timestamp("created_at").defaultNow(),
+	},
+	(table) => [
+		uniqueIndex("payment_methods_owner_name_idx").on(
+			table.user_uid,
+			table.name,
+		),
+	],
+);
 
 // ── Transactions ────────────────────────────────────────────────────────────
 export const transactions = pgTable("transactions", {
