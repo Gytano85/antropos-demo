@@ -13,6 +13,7 @@ import { Label } from "@finopenpos/ui/components/label";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
 	Building2Icon,
+	CreditCardIcon,
 	ImageIcon,
 	PaletteIcon,
 	ReceiptTextIcon,
@@ -20,18 +21,22 @@ import {
 	SettingsIcon,
 } from "lucide-react";
 import Link from "next/link";
-import { useSearchParams, useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { applyAdminTheme } from "@/components/admin-theme-applier";
 import { ProductImage } from "@/components/product-image";
 import { useTRPC } from "@/lib/trpc/client";
+import { BranchesSection } from "../branches/page";
+import { PaymentMethodsSection } from "../payment-methods/page";
 
 const tabs = [
 	{ id: "general", label: "General", icon: Building2Icon },
 	{ id: "appearance", label: "Apariencia", icon: PaletteIcon },
 	{ id: "images", label: "Imágenes", icon: ImageIcon },
 	{ id: "fiscal", label: "Fiscal", icon: ReceiptTextIcon },
+	{ id: "payments", label: "Métodos de pago", icon: CreditCardIcon },
+	{ id: "branches", label: "Sucursales y roles", icon: Building2Icon },
 ] as const;
 
 type TabId = (typeof tabs)[number]["id"];
@@ -170,7 +175,9 @@ export default function SettingsPage() {
 	};
 
 	if (isLoading) {
-		return <div className="text-muted-foreground">Cargando configuración...</div>;
+		return (
+			<div className="text-muted-foreground">Cargando configuración...</div>
+		);
 	}
 
 	return (
@@ -311,8 +318,8 @@ export default function SettingsPage() {
 					</CardHeader>
 					<CardContent className="space-y-4">
 						<div className="rounded-lg border bg-muted/40 p-3 text-muted-foreground text-sm">
-							Usa links directos que terminen o respondan como imagen: JPG, PNG o
-							WebP. Si dejas vacío un producto, el sistema usará la imagen
+							Usa links directos que terminen o respondan como imagen: JPG, PNG
+							o WebP. Si dejas vacío un producto, el sistema usará la imagen
 							predeterminada por nombre/categoría.
 						</div>
 						<div className="grid gap-4">
@@ -340,8 +347,9 @@ export default function SettingsPage() {
 					</CardHeader>
 					<CardContent className="space-y-4">
 						<p className="text-muted-foreground text-sm">
-							Desde aquí entras a la configuración fiscal. Esta pestaña reemplaza
-							el acceso escondido que antes estaba fuera de Configuración.
+							Desde aquí entras a la configuración fiscal. Esta pestaña
+							reemplaza el acceso escondido que antes estaba fuera de
+							Configuración.
 						</p>
 						<Button asChild>
 							<Link href="/admin/fiscal/settings">
@@ -351,6 +359,10 @@ export default function SettingsPage() {
 					</CardContent>
 				</Card>
 			)}
+
+			{active === "payments" && <PaymentMethodsSection />}
+
+			{active === "branches" && <BranchesSection />}
 		</div>
 	);
 }
@@ -374,7 +386,10 @@ function ColorField({
 					onChange={(event) => onChange(event.target.value)}
 					className="h-10 w-14 p-1"
 				/>
-				<Input value={value} onChange={(event) => onChange(event.target.value)} />
+				<Input
+					value={value}
+					onChange={(event) => onChange(event.target.value)}
+				/>
 			</div>
 		</div>
 	);

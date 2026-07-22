@@ -661,7 +661,7 @@ async function seedBranches(ownerUid: string, paymentMethodIds: number[]) {
 		.where(sql`${products.user_uid} = ${norte.data_scope_uid}`)
 		.limit(1);
 	if (!norteProduct) {
-		await seedBranchData(norte.data_scope_uid, paymentMethodIds);
+		await seedBranchData(norte.data_scope_uid);
 	}
 
 	const accounts: Array<{
@@ -787,7 +787,20 @@ async function ensureMembership(
 }
 
 /** Catalogo y ventas propias de una sucursal, para que no aparezca vacia. */
-async function seedBranchData(scopeUid: string, paymentMethodIds: number[]) {
+async function seedBranchData(scopeUid: string) {
+	// Los metodos de pago se filtran por scope igual que el resto de los datos,
+	// asi que cada sucursal necesita los suyos: sin esto el POS de la sucursal
+	// nueva no tenia con que cobrar.
+	const branchPaymentMethods = await db
+		.insert(paymentMethods)
+		.values(
+			["Tarjeta de crédito", "Tarjeta de débito", "Efectivo"].map((name) => ({
+				name,
+				user_uid: scopeUid,
+			})),
+		)
+		.returning();
+	const paymentMethodIds = branchPaymentMethods.map((method) => method.id);
 	const catalogue = DEMO_PRODUCTS.filter((product) =>
 		["cervezas", "cocteles", "snacks"].includes(product.category),
 	);
