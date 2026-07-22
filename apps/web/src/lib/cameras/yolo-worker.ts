@@ -34,6 +34,10 @@ export type WorkerResponse =
 	| { type: "error"; id?: number; message: string };
 
 const PAD_VALUE = 114;
+const BACKEND_INIT_TIMEOUT_MS: Record<"webgpu" | "wasm", number> = {
+	webgpu: 12_000,
+	wasm: 60_000,
+};
 
 type Runtime = {
 	ort: typeof import("onnxruntime-web");
@@ -72,10 +76,11 @@ async function initialise(config: WorkerInitMessage) {
 		const errors: string[] = [];
 		for (const backend of backends) {
 			try {
-				const session = await ort.InferenceSession.create(config.modelUrl, {
-					executionProviders: [backend],
-					graphOptimizationLevel: "all",
-				});
+				const session = await createSessionWithTimeout(
+					ort,
+					config.modelUrl,
+					backend,
+				);
 				const inputName = session.inputNames[0];
 				const outputName = session.outputNames[0];
 				if (!inputName || !outputName) {
@@ -170,6 +175,30 @@ async function detect({ id, bitmap, frame }: WorkerDetectMessage) {
 	} finally {
 		bitmap.close();
 	}
+}
+
+async function createSessionWithTimeout(
+	ort: typeof import("onnxruntime-web"),
+	modelUrl: string,
+	backend: "webgpu" | "wasm",
+) {
+	return await Promise.race([
+		ort.InferenceSession.create(modelUrl, {
+			executionProviders: [backend],
+			graphOptimizationLevel: "all",
+		}),
+		new Promise<never>((_, reject) => {
+			setTimeout(
+				() =>
+					reject(
+						new Error(
+							`Timeout iniciando ${backend}; se probara el siguiente backend.`,
+						),
+					),
+				BACKEND_INIT_TIMEOUT_MS[backend],
+			);
+		}),
+	]);
 }
 
 function toNchw(rgba: Uint8ClampedArray, inputSize: number) {
